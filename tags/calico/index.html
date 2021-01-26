@@ -17,7 +17,7 @@
   <meta name="description" content="">
   <meta name="author" content="maao">
   <meta name="keywords" content="">
-  <title>标签 - MAAO的博客</title>
+  <title>标签 - calico - MAAO的博客</title>
 
   <link  rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css" />
 
@@ -132,7 +132,7 @@
           <div class="container page-header text-center fade-in-up">
             <span class="h2" id="subtitle">
               
-                标签
+                标签 - calico
               
             </span>
 
@@ -156,9 +156,22 @@
               <div class="col-12 col-md-10 m-auto">
                 
 
-<div class="text-center tagcloud">
-  <a href="/tags/BGP/" style="font-size: 15px; color: #bbe">BGP</a> <a href="/tags/calico/" style="font-size: 15px; color: #bbe">calico</a> <a href="/tags/ipvs/" style="font-size: 15px; color: #bbe">ipvs</a> <a href="/tags/kube-proxy/" style="font-size: 15px; color: #bbe">kube-proxy</a>
+<div class="list-group">
+  <p class="h4">共计 1 篇文章</p>
+  <hr>
+  
+    
+      
+      <p class="h5">2021</p>
+    
+    <a href="/2021/01/26/Calico-BGP%E5%8A%9F%E8%83%BD%E4%BB%8B%E7%BB%8D%EF%BC%9ABIRD%E7%AE%80%E4%BB%8B/" class="list-group-item list-group-item-action">
+      <span class="archive-post-title">Calico BGP功能介绍：BIRD简介</span>
+      <time style="float: right;">01-26</time>
+    </a>
+  
 </div>
+
+
 
               </div>
             </div>
@@ -389,7 +402,7 @@
       if ('false' === 'true') {
         var viewCtn = document.querySelector('#leancloud-post-views-container');
         if (viewCtn || enableIncr) {
-          var target = decodeURI('/tags/index.html');
+          var target = decodeURI('/tags/calico/index.html');
           var viewGetter = getRecord(Counter, target).then((record) => {
             incrArr.push(buildIncrement(record.objectId))
             if (viewCtn) {
