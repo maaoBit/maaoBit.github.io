@@ -17,7 +17,7 @@
   <meta name="description" content="">
   <meta name="author" content="maao">
   <meta name="keywords" content="">
-  <title>Calico BGP功能介绍：BIRD简介 - MAAO的博客</title>
+  <title>廉价的K8s LB方案--MetalLB - MAAO的博客</title>
 
   <link  rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css" />
 
@@ -145,7 +145,7 @@
           <div class="container page-header text-center fade-in-up">
             <span class="h2" id="subtitle">
               
-                Calico BGP功能介绍：BIRD简介
+                廉价的K8s LB方案--MetalLB
               
             </span>
 
@@ -155,8 +155,8 @@
   
     <span class="post-meta">
       <i class="iconfont icon-date-fill" aria-hidden="true"></i>
-      <time datetime="2021-01-26 16:08" pubdate>
-        2021年1月26日 下午
+      <time datetime="2021-02-09 11:28" pubdate>
+        2021年2月9日 上午
       </time>
     </span>
   
@@ -167,7 +167,7 @@
     
     <span class="post-meta mr-2">
       <i class="iconfont icon-chart"></i>
-      2.6k 字
+      1.7k 字
     </span>
   
 
@@ -177,7 +177,7 @@
       <i class="iconfont icon-clock-fill"></i>
       
       
-      30
+      19
        分钟
     </span>
   
@@ -215,152 +215,73 @@
         <div class="py-5" id="board">
           <article class="post-content mx-auto" id="post">
             <!-- SEO header -->
-            <h1 style="display: none">Calico BGP功能介绍：BIRD简介</h1>
+            <h1 style="display: none">廉价的K8s LB方案--MetalLB</h1>
             
             <div class="markdown-body" id="post-body">
-              <p>Calico作为一种常用的Kubernetes网络插件，使用BGP协议对各节点的容器网络进行路由交换。本文是《Calico BGP功能介绍》系列的第一篇，介绍Calico所使用的BGP软件路由器——BIRD。</p>
+              <p>MetalLB为本地运行的Kubernetes集群提供了LoadBalance功能，使用户能想在公有云环境一样，使用K8S的LoadBalancer Service。</p>
 <a id="more"></a>
+<p>在Kubernetes中部署MetalLB后，会有两个部分，一部分是负责监听K8S Service资源变化的Controller，以Deployment的方式部署在整个集群上，另一部分是各个节点上的代理组件Speaker，以DaemonSet方式部署，负责ARP Reply或是BGP的宣告。</p>
+<p>MetalLB有两种模式，一种是二层网络模式，一种是BGP模式。</p>
+<h2 id="二层网络模式"><a href="#二层网络模式" class="headerlink" title="二层网络模式"></a>二层网络模式</h2><p><img src="/img/metallb1.png" srcset="/img/loading.gif"></p>
+<p>二层网络模式，顾名思义，所有的流量都在一个二层网络中。此模式下MetalLB其实并未进行负载均衡，而是借助其他组件例如Kube-proxy，来实现负载均衡。具体的，如上图所示，MetalLB将Service External IP（由MetalLB的Controller根据预先设定好的IP段，配置在LoadBalance类型的Service上）配置在K8S集群节点的local网卡上（比如kube-ipvs0），当Client访问Service External IP时，由于在同一个二层，会广播ARP请求，MetalLB会使用某个节点进行ARP Reply（IPv6通过NDP协议），从而Client请求流量会发送到此节点，然后由节点上的Kube-proxy进行负载，转到真正的Pod地址。</p>
+<p>需要说明的是：</p>
+<p>1）Service External IP地址需要与Client在同一网段。</p>
+<p>2）为了使其他节点不对local网卡上的Service External IP进行ARP Reply，节点需要设置<code>arp_ignore=1</code>以及<code>arp_announce=2</code>，或者是设置Kube-proxy的<code>--ipvs-strict-arp</code>参数。</p>
+<p>3）MetalLB对于每个Service会选一个节点，始终由这个节点进行ARP Reply。节点的选择方式是：先过滤出Service后端Pod所在的节点，然后以Service Name、Service Namespace、NodeIP等计算hash值，排序hash值取第一个。</p>
+<p>3）由于上面的选择方式，MetalLB对ExternalTrafficPolicy=Local的Service是支持的，但会导致只用到部分后端Pod实例。</p>
+<p>4）Kube-proxy会同时进行DNAT与SNAT，回包并不是如LVS DR模式，而是原路返回。</p>
+<p>5）Kube-proxy也可以使用其他组件代替，比如Cilium的Kube-proxy replace方案。</p>
+<p>二层网络模式在生产环境中使用有限，原因有二：</p>
+<p>1）扩展性有限。受ARP协议和NDP协议的限制，每个Service都只有一个真正的“入口”，因此这个节点很可能会成为网络瓶颈的所在。</p>
+<p>2）故障转移依赖客户端。MetalLB使用<a target="_blank" rel="noopener" href="https://github.com/hashicorp/memberlist">memberlist</a>做为分布式节点的管理，如果当前使用的节点出现故障时，MetalLB会在新的memberlist中（已删除故障节点）再次选择某个节点进行替换。接着MetalLB会给客户端发送一个“额外的二层包”，告知客户端OS需要更新他们的MAC缓存，而在客户端OS更新缓存前，流量仍会转发到故障节点。因此从某种程度来说，故障转移的时间，就依赖于客户端OS更新MAC缓存的速度。</p>
+<p>3）选节点的hash并非一致性，添加节点有一定概率导致Service的节点发生变化。</p>
+<h2 id="BGP模式"><a href="#BGP模式" class="headerlink" title="BGP模式"></a>BGP模式</h2><p><img src="/img/metallb2.png" srcset="/img/loading.gif"></p>
+<p>BGP模式不限于一个二层网络里，各个节点都会与交换机建立BGP Peer，宣告Service External IP的下一跳为自身，这样通过ECMP实现了一层负载。客户端请求通过交换机负载到后端某个节点后，再由Kube-proxy进行转发。</p>
+<p>对于<code>externalTrafficPolicy=Local</code>的Service，只有本机存在服务Pod时，才会进行Service External IP的BGP路由宣告。</p>
+<p><img src="/img/MetalLB3.png" srcset="/img/loading.gif"></p>
+<p>可以看到这种方式实际上是经过了两层的转发，当Service ExternalTrafficPolicy为Cluster时，每次转发的概率其实是均等的，但当Service ExternalTrafficPolicy为Local时，虽然转发到每个节点的概率是一致的，但每个节点上服务Pod数量不一致，导致每个Pod上的流量其实并不均等。</p>
+<p>在这种模式中，我们希望对于客户端请求的转发遵循会话保持，否则会出现数据包的乱序或丢弃。一般在硬件上，通过对数据包的3元组（源地址、目标地址、协议）或是五元组（三元组加上源端口、目标端口）进行hash，来实现同一会话转发到相同的后端。但需要注意，这种hash一般不是一致性hash，这就导致当后端某个节点的失效后，会对其他连接也会参数影响，扩大了故障的“爆炸半径”。</p>
+<p>官方给了一些缓解的办法，比如在MetalLB和Service后端之间，加入一层有状态的负载——ingress Controller。</p>
+<p>另外 ，BGP模式下，MetalLB提供了部分参数，来实现对BGP协议的控制，比如BGP community、localpref等。</p>
+<div class="hljs"><pre><code class="hljs routeros">apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: metallb-system
+  name: config
+data:
+  config: |
+    peers:
+    - peer-address: 10.0.0.1
+      peer-asn: 64501
+      my-asn: 64500
+    address-pools:
+    - name: default
+      protocol: bgp
+      addresses:
+      - 198.51.100.0/24
+      bgp-advertisements:
+      - aggregation-length: 32
+        localpref: 100
+        communities:
+        - no-advertise
+      - aggregation-length: 24
+    bgp-communities:
+      no-advertise: 65535:65282</code></pre></div>
 
-<blockquote>
-<p>关于BGP协议，网上资料众多，在这里不再做介绍。另外，推荐《BGP in the datacenter》作为BGP应用的进阶阅读，另有<a target="_blank" rel="noopener" href="https://cshihong.github.io/2020/04/18/BGP-in-the-datacenter-%E6%95%B0%E6%8D%AE%E4%B8%AD%E5%BF%83%E7%9A%84BGP-%E6%95%B0%E6%8D%AE%E4%B8%AD%E5%BF%83%E7%BD%91%E7%BB%9C%E6%9E%B6%E6%9E%84-Clos%E7%BD%91%E7%BB%9C%E6%9E%B6%E6%9E%84/">中文翻译版本</a></p>
-</blockquote>
-<h2 id="BIRD"><a href="#BIRD" class="headerlink" title="BIRD"></a>BIRD</h2><p>BIRD实际上是BIRD Internet Routing Daemon的缩写（禁止套娃），是一款可运行在Linux和其他类Unix系统上的路由软件，它实现了多种路由协议，比如BGP、OSPF、RIP等。</p>
-<h2 id="概念"><a href="#概念" class="headerlink" title="概念"></a>概念</h2><p>BIRD会在内存中维护许多<strong>路由表</strong>，路由表根据不同的<strong>协议</strong>，通过与各种“其他事物”交换路由信息，来更新路由规则。这里说的“其他事物”可能是其他的路由表，也可能是外部的路由器，还可以是内核的某些API。</p>
-<h3 id="路由表"><a href="#路由表" class="headerlink" title="路由表"></a>路由表</h3><p>路由表（Routing tables）是BIRD的核心，一个路由表是内存中一组路由规则的集合，BIRD根据网络类型的不同会有多种路由表。默认情况下，BIRD有<code>master4</code>和<code>master6</code>两个默认的路由表，分别保存IPv4和IPv6路由规则。除此外，你也可以创建其他的路由表，比如在配置文件<code>bird.conf</code>中添加如下配置，创建一个IPv4的路由表<code>my_table</code>。</p>
-<div class="hljs"><pre><code class="hljs text">ipv4 table my_table;</code></pre></div>
-
-<p>要注意的是，BIRD的路由表仅仅是一个表，并没有转发的功能，真正的转发控制，是内核的FIB（Forwarding Information Base）。而BIRD的<code>kernel</code>协议，可以将BIRD路由表与FIB进行同步，后面会介绍。</p>
-<p>路由规则中包含了各种<strong>路由属性</strong>（Route attributes），网络类型不同的路由表，其路由属性也不太一样，比如常见的IPv4和IPv6的路由表，会包括两个路由属性：</p>
-<ul>
-<li>路由目的地</li>
-<li>路由下一跳</li>
-</ul>
-<p>而VPN路由表还会包含路由属性：路由标识符（Route distinguisher）。</p>
-<p>BIRD的每种表都会将一个或一组路由属性作为<strong>主键</strong>，类似于SQL数据库。当多个来源都提供了相同主键的路由条目时，BIRD会根据一定的规则选择最优路由。例如IPv4和IPv6类型的路由表，将“路由目的地”作为主键。</p>
-<h3 id="协议与通道"><a href="#协议与通道" class="headerlink" title="协议与通道"></a>协议与通道</h3><p>协议（Protocols）将路由表和“其他事物”连接起来。“其他事物”可以是一个Socket对象，连接了外部的路由器，例如BGP路由协议；也可以是修改FIB的内核API，例如<code>kernel</code>协议；也可以是空，比如静态路由<code>static</code>协议。一个协议可以实例化为多个对象，例如创建多个BGP协议的实例，以表示多个BGP邻居。</p>
-<p>协议也会提供一些路由属性，根据协议的不同路由属性也不同，比如使用BGP协议时，会有<code>bgp_path</code>属性。</p>
-<p>协议可能包含一些<strong>通道</strong>（Channels），通道是在协议和路由表之间，配置了路由规则在导入（import)）、导出（export）两个方向上的行为，导入导出是针对路由表来说的，路由规则经过通道后，或是被接收（Accept），或是被拒绝（Reject），或是被修改。不同的协议可拥有的通道也不一样，例如BGP协议可以同时拥有<code>IPv4</code>和<code>IPv6</code>通道，RIP只能拥有IPv4或IPv6一种协议，而BFD则没有通道。</p>
-<p>下面是根据官网样例修改而来的配置，实例化了一个名为<code>peer_one</code>的BGP协议，并且设置了<code>ipv4</code>和<code>ipv6</code>两个通道，两个通道都未指明连接的路由表，则使用默认的<code>master4</code>与<code>master6</code>路由表。其中在<code>ipv4</code> 通道中，导入方向配置为全部接收，导出方向上只导出静态路由，同时还会对路由规则的BGP信息进行修改：修改bgp  community，修改bgp  path；在<code>ipv6</code>通道上，则直接使用默认配置。</p>
-<div class="hljs"><pre><code class="hljs json">protocol bgp peer_one &#123;
-        local 198.51.100.14 as 65000;        # Use a private AS number
-        neighbor 198.51.100.130 as 64496;    # Our neighbor ...
-        ipv4 &#123;
-                export filter &#123;                      # We use non-trivial export rules
-                        if source = RTS_STATIC then &#123; # Export only static routes
-                                # Assign our community
-                                bgp_community.add((65000,64501));
-                                # Artificially increase path length
-                                # by advertising local AS number twice
-                                if bgp_path ~ [= 65000 =] then
-                                        bgp_path.prepend(65000);
-                                accept;
-                        &#125;
-                        reject;
-                &#125;;
-                import all;
-        &#125;;
-        ipv6;
-&#125;</code></pre></div>
 
 
-
-<h2 id="主要功能"><a href="#主要功能" class="headerlink" title="主要功能"></a>主要功能</h2><h3 id="模板"><a href="#模板" class="headerlink" title="模板"></a>模板</h3><p>在BIRD中，可以定义<strong>模板</strong>（template），通过模板来创建一个协议的多个实例。模板在使用BGP协议时非常好用，因为BGP通常都会设置多个BGP Peer。例如下面配置，通过模板提取出共用的配置，然后利用模板创建多个BGP邻居。</p>
-<div class="hljs"><pre><code class="hljs json">template bgp foo &#123;
-        local 198.51.100.14 as 65000;
-
-        ipv4 &#123;
-                table mytable4;
-                import filter &#123; ... &#125;;
-                export none;
-        &#125;;
-        ipv6 &#123;
-                table mytable6;
-                import filter &#123; ... &#125;;
-                export none;
-        &#125;;
-&#125;
-
-protocol bgp bgp1 from foo &#123;
-        neighbor 198.51.100.130 as 64496;
-&#125;
-
-protocol bgp bgp2 from foo &#123;
-        neighbor 198.51.100.131 as 64496;
-&#125;</code></pre></div>
-
-<h3 id="过滤器"><a href="#过滤器" class="headerlink" title="过滤器"></a>过滤器</h3><p><strong>过滤器</strong>（Filters）在上面的用例中已经出现了多次，通过在通道中添加过滤器，可以灵活地控制路由规则的交换。在过滤器中，你可以像访问变量一样直接使用各种路由属性，来编写各种判断条件，以决定对路由规则是ACCEPT还是REJECT，或是直接对路由属性进行修改。</p>
-<p>为了便于复用，还可以以函数的形式定义一个过滤器，使用时在相应的通道中直接调用。需要注意的是，编写过滤器需要使用BIRD提供的专门的编程语言，它提供了一些例如<code>if</code>、<code>switch</code>的简单控制结构，但不允许有循环出现。同时，除了<code>int</code>、<code>string</code>这些基础的数据结构外，它还提供了例如<code>bgppatch</code>、<code>bgpmask</code>等这种表示路由规则中某些信息的数据结构。例如下面定义了一个名为<code>not_too_far</code>的过滤器，丢弃掉<code>rip_metric</code>大于10的路由规则，可以通过<code>import filter not_too_far</code>直接调用此函数。</p>
-<div class="hljs"><pre><code class="hljs C">filter not_too_far
-<span class="hljs-keyword">int</span> var;
-&#123;
-        <span class="hljs-function"><span class="hljs-keyword">if</span> <span class="hljs-title">defined</span><span class="hljs-params">( rip_metric )</span> then</span>
-<span class="hljs-function">                var </span>= rip_metric;
-        <span class="hljs-keyword">else</span> &#123;
-                var = <span class="hljs-number">1</span>;
-                rip_metric = <span class="hljs-number">1</span>;
-        &#125;
-        <span class="hljs-keyword">if</span> rip_metric &gt; <span class="hljs-number">10</span> then
-                reject <span class="hljs-string">&quot;RIP metric is too big&quot;</span>;
-        <span class="hljs-keyword">else</span>
-                accept <span class="hljs-string">&quot;ok&quot;</span>;
-&#125;</code></pre></div>
-
-<h2 id="常见协议"><a href="#常见协议" class="headerlink" title="常见协议"></a>常见协议</h2><p>这里只介绍Calico中使用到的几种协议，以及用到的协议属性。</p>
-<h3 id="device"><a href="#device" class="headerlink" title="device"></a>device</h3><p>准确来说，<code>device</code>并不算是一个协议，它不产生任何路由，也不支持通道，而是被用来从内核中获取网卡设备的信息。每个<code>bird.conf</code>的配置文件中，都应定义一个<code>device</code>。</p>
-<div class="hljs"><pre><code class="hljs json">protocol device &#123;
-        scan time 10;           # Scan the interfaces often
-        interface &quot;eth0&quot; &#123;
-                preferred 192.168.1.1;
-                preferred 2001:db8:1:10::1;
-        &#125;;
-&#125;</code></pre></div>
-
-<p>上面配置定义了BIRD每10s扫描一遍<code>eth0</code>网卡，同时定义了首选的IP地址。</p>
-<h3 id="kernel"><a href="#kernel" class="headerlink" title="kernel"></a>kernel</h3><p><code>kernel</code>也不算真正的协议，它负责同步路由表与内核。如果内核支持多个内核路由表，那么可以创建多个<code>kernel</code>实例，否则只需要创建一个<code>kernel</code>实例。<code>kernel</code>协议有两个限制：</p>
-<ul>
-<li>不能将多个<code>kernel</code>实例都连接到同一个路由表上</li>
-<li>不能修改导出（export）路由规则的目标地址</li>
-</ul>
-<p>一些主要的参数包括：</p>
-<ul>
-<li><code>learn switch</code>，开启后路由表可以从内核中学习到非内核生成（其他方式添加）的路由。“内核生成的路由”指的是由于本机网络的配置而产生的路由，比如<code>eth0</code>在被分配<code>192.168.1.2/24</code>后，会自动产生一条目的地为<code>192.168.1.0/24</code>，下一跳为<code>eth0</code>的路由。需要注意的是，即使是开启<code>learn</code>，<code>kernel</code>也不会将这些路由从内核导入（import）路由表，这种路由的传递需要使用到<code>direct</code>协议。（<code>switch</code>表示<code>on</code>和<code>off</code>两种值，下面相同）</li>
-<li><code>persist switch</code>，BIRD退出时，在内核保留同步的路由（即不会进行clean up操作）。</li>
-<li><code>scan time number</code>，同步间隔，单位秒</li>
-</ul>
-<div class="hljs"><pre><code class="hljs json"># 同步master4、master6路由表与主FIB，并在退出后保持同步的路由
-protocol kernel &#123;
-    learn;
-    persist;
-&#125;</code></pre></div>
-
-<h3 id="direct"><a href="#direct" class="headerlink" title="direct"></a>direct</h3><p>如上面所述，<code>direct</code>用于将内核生成的路由规则从内核导入到BIRD路由表中，可用的参数包括：</p>
-<ul>
-<li><code>interface pattern [, ...]</code>，用于指定传递由哪些网卡生成的路由规则，默认是全部网卡</li>
-<li><code>check link switch</code>，开启后会考虑link的状态，当link状态为up时，传递路由，否则，撤销传递的路由</li>
-</ul>
-<div class="hljs"><pre><code class="hljs json"># 同步除了eth0以外的其他网卡
-protocol direct &#123;
-  interface -&quot;eth0&quot;, &quot;*&quot;; 
-&#125;</code></pre></div>
-
-<h3 id="BGP"><a href="#BGP" class="headerlink" title="BGP"></a>BGP</h3><p>每一个BGP协议的实例，代表了一个BGP Peer连接。需要注意的是，部分参数的默认值对IBGP与EBGP并不相同，例如<code>aigp</code>默认在IBGP中是开启的，默认在EBGP是关闭的。协议的主要参数包括：</p>
-<ul>
-<li><code>local [ip] [port number] [as number]</code>，可以用来指定BGP的源IP地址以及本地的AS。</li>
-<li><code>multihop [number]</code>，表示多跳的BGP，后面的<code>number</code>可以用来设置<code>TTL</code>的值，IBGP默认开启；相反的，还有个参数为<code>direct</code>，表示与BGP邻居直连，EBGP默认开启。</li>
-<li><code>source address ip</code>，用来指定本端使用的BGP源地址。</li>
-<li><code>add paths switch|rx|tx</code>，开启时，会将 BGP 配置为向同一目标通告多个路径，否则 BGP 仅通告活动路径。</li>
-<li><code>password string</code> ，使用设置的密码进行BGP的身份验证。</li>
-<li><code>rr client</code>，开启RR模式（Route Reflector）。</li>
-<li><code>rr cluster id IPv4 address</code>，设置RR的<code>cluster id</code>，以防止路由环路。默认情况下，会直接使用BGP的<code>router id</code>（一般是ipv4地址）作为<code>cluster id</code>，当有多个RR时，需要使用此参数设置相同的<code>cluster id</code>。</li>
-<li><code>bfd switch|graceful</code>，使用BFD作为BGP协议心跳机制。</li>
-<li><code>passive switch</code>，被动模式，不主动初始化连接，而是等待其他BGP邻居发起连接。</li>
-</ul>
-<p>以上是协议一层的配置参数，在BGP协议中，通道也会有额外的参数，例如：</p>
-<ul>
-<li><code>gateway direct|recursive</code>，用来控制如何计算路由的gw属性。当设置为<code>direct</code>时，如果路由中的<code>bgp_next_hop</code>是和本机中的某个地址同一子网（同一个二层），则gw直接为<code>bgp_next_hop</code>，否则为对端BGP Peer的IP地址；当设置为<code>recursive</code>时，会从IGP路由表中查询<code>bgp_next_hop</code>来作为gw。</li>
-<li><code>next hop keep switch|ibgp|ebgp</code>，开启后，BGP不再将<code>next hop</code>属性修改为自身，而是直接通告原始的<code>next hop</code>，这个参数在多跳的EBGP场景或BGP路由反射中会使用到。</li>
-</ul>
-<h2 id="参考文档"><a href="#参考文档" class="headerlink" title="参考文档"></a>参考文档</h2><p><a target="_blank" rel="noopener" href="https://bird.network.cz/?get_doc&v=20&f=bird.html#toc5">BIRD官方手册</a></p>
+<h3 id="类比Calico对Service的BGP"><a href="#类比Calico对Service的BGP" class="headerlink" title="类比Calico对Service的BGP"></a>类比Calico对Service的BGP</h3><p>从Calico v3.4开始，Calico支持对K8S的Service地址进行BGP，其逻辑和MetalLB BGP逻辑基本相同。有几点区别：</p>
+<p>1）默认的情况下，MetalLB是对单个IP进行BGP的，子网掩码是32，但对Calico配置的是一个CIDR，Calico对外BGP的是整个网络段的路由，只有在externalTrafficPolicy为Local时，才会对单个IP进行BGP。</p>
+<p>2）Calico不仅会BGP Service External IP，还可以BGP Service ClusterIP，两者的转发过程是类似的，都是将流量负载到某个K8S节点后，进行SNAT与DNAT。</p>
+<p>3）Calico不负责LoadBalancer Service IP的分配。</p>
+<h2 id="IP地址共享"><a href="#IP地址共享" class="headerlink" title="IP地址共享"></a>IP地址共享</h2><p>默认情况下，MetalLB只会将一个IP地址分配到一个LoadBalancer Service上，用户可以通过<code>spec.loadBalancerIP</code>来指定自己想用的IP，如果用户指定了已被分配了的IP会，则会报错。但MetalLB也提供了方式去支持多个Service共享相同的IP，主要为了解决：K8S不支持对LoadBalancer Service中的Port指定多协议；有限的IP地址资源。</p>
+<p>具体的方式是：创建两个Service，并加上<code>metallb.universe.tf/allow-shared-ip</code>为Key的<code>annotation</code>，表明Service能容忍使用共享的LoadBalancerIP；然后通过<code>spec.loadBalancerIP</code>给两个Service指定共享的IP。</p>
+<p>IP地址共享也有限制：</p>
+<p>1）两个Service的<code>metallb.universe.tf/allow-shared-ip</code>值是一样的。</p>
+<p>2）两个Service的“端口”（带协议）不同，比如<code>tcp/53</code>和<code>udp/53</code>是属于不同的“端口”。</p>
+<p>3）两个Service对应的后端Pod要一致，如果不一致，那么他们的externalTrafficPolicy需要都是Cluster，不然会无法进行正确的BGP。</p>
+<p>目前K8S已经开始支持<a target="_blank" rel="noopener" href="https://github.com/kubernetes/kubernetes/pull/94028">对LoadBalancer Service指定多协议</a>，因此除了MetalLB提供的IP地址共享的方式，也可以使用原生的功能。</p>
+<h2 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h2><p><a target="_blank" rel="noopener" href="https://metallb.universe.tf/">https://metallb.universe.tf/</a></p>
 
             </div>
             <hr>
@@ -371,9 +292,7 @@ protocol direct &#123;
                   <div class="post-meta">
                     <i class="iconfont icon-tags"></i>
                     
-                      <a class="hover-with-bg" href="/tags/calico/">calico</a>
-                    
-                      <a class="hover-with-bg" href="/tags/BGP/">BGP</a>
+                      <a class="hover-with-bg" href="/tags/metalLB/">metalLB</a>
                     
                   </div>
                 
@@ -386,18 +305,12 @@ protocol direct &#123;
                   <article class="post-prev col-6">
                     
                     
-                      <a href="/2021/02/09/%E5%BB%89%E4%BB%B7%E7%9A%84K8s-LB%E6%96%B9%E6%A1%88-MetalLB/">
-                        <i class="iconfont icon-arrowleft"></i>
-                        <span class="hidden-mobile">廉价的K8s LB方案--MetalLB</span>
-                        <span class="visible-mobile">上一篇</span>
-                      </a>
-                    
                   </article>
                   <article class="post-next col-6">
                     
                     
-                      <a href="/2021/01/15/%E6%B7%B1%E5%85%A5kube-proxy%20ipvs%E6%A8%A1%E5%BC%8F%E7%9A%84conn_reuse_mode%E9%97%AE%E9%A2%98/">
-                        <span class="hidden-mobile">深入kube-proxy ipvs模式的conn_reuse_mode问题</span>
+                      <a href="/2021/01/26/Calico-BGP%E5%8A%9F%E8%83%BD%E4%BB%8B%E7%BB%8D%EF%BC%9ABIRD%E7%AE%80%E4%BB%8B/">
+                        <span class="hidden-mobile">Calico BGP功能介绍：BIRD简介</span>
                         <span class="visible-mobile">下一篇</span>
                         <i class="iconfont icon-arrowright"></i>
                       </a>
@@ -651,7 +564,7 @@ protocol direct &#123;
       if ('true' === 'true') {
         var viewCtn = document.querySelector('#leancloud-post-views-container');
         if (viewCtn || enableIncr) {
-          var target = decodeURI('/2021/01/26/Calico-BGP%E5%8A%9F%E8%83%BD%E4%BB%8B%E7%BB%8D%EF%BC%9ABIRD%E7%AE%80%E4%BB%8B/');
+          var target = decodeURI('/2021/02/09/%E5%BB%89%E4%BB%B7%E7%9A%84K8s-LB%E6%96%B9%E6%A1%88-MetalLB/');
           var viewGetter = getRecord(Counter, target).then((record) => {
             incrArr.push(buildIncrement(record.objectId))
             if (viewCtn) {
