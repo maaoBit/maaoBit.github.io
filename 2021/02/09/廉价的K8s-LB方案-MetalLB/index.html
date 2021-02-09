@@ -218,7 +218,7 @@
             <h1 style="display: none">廉价的K8S LB方案--MetalLB</h1>
             
             <div class="markdown-body" id="post-body">
-              <p>MetalLB为本地运行的Kubernetes集群提供了LoadBalance功能，使用户能想在公有云环境一样，使用K8S的LoadBalancer Service。</p>
+              <p>MetalLB为本地运行的Kubernetes集群提供了LoadBalance功能，使用户像在公有云环境一样，使用K8S的LoadBalancer Service。</p>
 <a id="more"></a>
 <p>在Kubernetes中部署MetalLB后，会有两个部分，一部分是负责监听K8S Service资源变化的Controller，以Deployment的方式部署在整个集群上，另一部分是各个节点上的代理组件Speaker，以DaemonSet方式部署，负责ARP Reply或是BGP的宣告。</p>
 <p>MetalLB有两种模式，一种是二层网络模式，一种是BGP模式。</p>
