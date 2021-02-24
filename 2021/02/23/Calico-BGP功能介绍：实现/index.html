@@ -315,7 +315,7 @@
 <p><img src="/img/calico-bgp1.png" srcset="/img/loading.gif"></p>
 <p>可以看到，主要的配置文件分为6个，其中IPv4和IPv6各3个。以IPv4为例，IPv6类似，bird.cfg为bird的主要配置文件，包括几个主要部分：</p>
 <p>1）全局的配置：包括route id、debug属性、listen bgp port，这一部分主要由node、bgp configuration中的字段产生。</p>
-<p>2）固定的协议配置：包括kernel、device、direct；其功能在上一篇<a target="_blank" rel="noopener" href="https://maao.cloud/2021/01/26/Calico-BGP%E5%8A%9F%E8%83%BD%E4%BB%8B%E7%BB%8D%EF%BC%9ABIRD%E7%AE%80%E4%BB%8B/">Calico BGP功能介绍：BIRD简介</a>中有详细介绍。</p>
+<p>2）固定的协议配置：包括kernel、device、direct；其功能在上一篇<a href="https://maao.cloud/2021/01/26/Calico-BGP%E5%8A%9F%E8%83%BD%E4%BB%8B%E7%BB%8D%EF%BC%9ABIRD%E7%AE%80%E4%BB%8B/">Calico BGP功能介绍：BIRD简介</a>中有详细介绍。</p>
 <div class="hljs"><pre><code class="hljs nim"><span class="hljs-comment"># Configure synchronization between routing tables and kernel.</span>
 protocol kernel &#123;
   learn;             <span class="hljs-comment"># Learn all alien routes from the kernel</span>
