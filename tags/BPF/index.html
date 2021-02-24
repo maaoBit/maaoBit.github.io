@@ -17,7 +17,7 @@
   <meta name="description" content="">
   <meta name="author" content="maao">
   <meta name="keywords" content="">
-  <title>标签 - MAAO的博客</title>
+  <title>标签 - BPF - MAAO的博客</title>
 
   <link  rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css" />
 
@@ -132,7 +132,7 @@
           <div class="container page-header text-center fade-in-up">
             <span class="h2" id="subtitle">
               
-                标签
+                标签 - BPF
               
             </span>
 
@@ -156,9 +156,22 @@
               <div class="col-12 col-md-10 m-auto">
                 
 
-<div class="text-center tagcloud">
-  <a href="/tags/BGP/" style="font-size: 15px; color: #bbe">BGP</a> <a href="/tags/BPF/" style="font-size: 15px; color: #bbe">BPF</a> <a href="/tags/calico/" style="font-size: 30px; color: #337ab7">calico</a> <a href="/tags/ipvs/" style="font-size: 15px; color: #bbe">ipvs</a> <a href="/tags/kube-proxy/" style="font-size: 15px; color: #bbe">kube-proxy</a> <a href="/tags/metalLB/" style="font-size: 15px; color: #bbe">metalLB</a>
+<div class="list-group">
+  <p class="h4">共计 1 篇文章</p>
+  <hr>
+  
+    
+      
+      <p class="h5">2021</p>
+    
+    <a href="/2021/02/24/%E7%AC%94%E8%AE%B0-Linux-Socket-Filtering-aka-Berkeley-Packet-Filter-BPF/" class="list-group-item list-group-item-action">
+      <span class="archive-post-title">[笔记]Linux Socket Filtering aka Berkeley Packet Filter (BPF)</span>
+      <time style="float: right;">02-24</time>
+    </a>
+  
 </div>
+
+
 
               </div>
             </div>
@@ -389,7 +402,7 @@
       if ('false' === 'true') {
         var viewCtn = document.querySelector('#leancloud-post-views-container');
         if (viewCtn || enableIncr) {
-          var target = decodeURI('/tags/index.html');
+          var target = decodeURI('/tags/BPF/index.html');
           var viewGetter = getRecord(Counter, target).then((record) => {
             incrArr.push(buildIncrement(record.objectId))
             if (viewCtn) {
