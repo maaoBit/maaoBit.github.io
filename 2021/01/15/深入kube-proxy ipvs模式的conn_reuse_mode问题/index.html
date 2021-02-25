@@ -138,7 +138,7 @@
 </nav>
 
     <div class="banner intro-2" id="background" parallax=true
-         style="background: url('/img/default.png') no-repeat center center;
+         style="background: url('/img/default.jpg') no-repeat center center;
            background-size: cover;">
       <div class="full-bg-img">
         <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
@@ -222,7 +222,7 @@
 <a id="more"></a>
 
 <h2 id="背景"><a href="#背景" class="headerlink" title="背景"></a>背景</h2><h3 id="端口重用"><a href="#端口重用" class="headerlink" title="端口重用"></a>端口重用</h3><p>一切问题来源于端口重用。在TCP四次挥手中有个<code>TIME_WAIT</code>的状态，作为先发送<code>FIN</code>包的一端，在接收到对端发送的<code>FIN</code>包后进入<code>TIME_WAIT</code>，在经过<code>2MSL</code>后才会真正关闭连接。<code>TIME_WAIT</code>状态的存在，一来可以避免将之前连接的延迟报文，作为当前连接的报文处理；二是可以处理最后一个ACK丢失带来的问题。</p>
-<p><img src="/img/2021-01-15-TCP.png" srcset="/img/loading.gif"></p>
+<p><img src="/img/2021-01-15-TCP.jpg" srcset="/img/loading.gif"></p>
 <p>而在短连接、高并发的场景下，会出现大量的<code>TIME-WAIT</code>连接，导致资源无法及时释放。Linux中内核参数<code>net.ipv4.tcp_tw_reuse</code>提供了一种减少<code>TIME-WAIT</code>连接的方式，可以将<code>TIME-WAIT</code>连接的端口分配给新的TCP连接，来复用端口。</p>
 <div class="hljs"><pre><code class="hljs text">tcp_tw_reuse - BOOLEAN
 	Allow to reuse TIME-WAIT sockets for new connections when it is

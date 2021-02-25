@@ -138,7 +138,7 @@
 </nav>
 
     <div class="banner intro-2" id="background" parallax=true
-         style="background: url('/img/default.png') no-repeat center center;
+         style="background: url('/img/default.jpg') no-repeat center center;
            background-size: cover;">
       <div class="full-bg-img">
         <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
@@ -222,7 +222,7 @@
 <a id="more"></a>
 <p>在Kubernetes中部署MetalLB后，会有两个部分，一部分是负责监听K8S Service资源变化的Controller，以Deployment的方式部署在整个集群上，另一部分是各个节点上的代理组件Speaker，以DaemonSet方式部署，负责ARP Reply或是BGP的宣告。</p>
 <p>MetalLB有两种模式，一种是二层网络模式，一种是BGP模式。</p>
-<h2 id="二层网络模式"><a href="#二层网络模式" class="headerlink" title="二层网络模式"></a>二层网络模式</h2><p><img src="/img/metallb1.png" srcset="/img/loading.gif"></p>
+<h2 id="二层网络模式"><a href="#二层网络模式" class="headerlink" title="二层网络模式"></a>二层网络模式</h2><p><img src="/img/metallb1.jpg" srcset="/img/loading.gif"></p>
 <p>二层网络模式，顾名思义，所有的流量都在一个二层网络中。此模式下MetalLB其实并未进行负载均衡，而是借助其他组件例如Kube-proxy，来实现负载均衡。具体的，如上图所示，MetalLB将Service External IP（由MetalLB的Controller根据预先设定好的IP段，配置在LoadBalance类型的Service上）配置在K8S集群节点的local网卡上（比如kube-ipvs0），当Client访问Service External IP时，由于在同一个二层，会广播ARP请求，MetalLB会使用某个节点进行ARP Reply（IPv6通过NDP协议），从而Client请求流量会发送到此节点，然后由节点上的Kube-proxy进行负载，转到真正的Pod地址。</p>
 <p>需要说明的是：</p>
 <p>1）Service External IP地址需要与Client在同一网段。</p>
@@ -235,10 +235,10 @@
 <p>1）扩展性有限。受ARP协议和NDP协议的限制，每个Service都只有一个真正的“入口”，因此这个节点很可能会成为网络瓶颈的所在。</p>
 <p>2）故障转移依赖客户端。MetalLB使用<a target="_blank" rel="noopener" href="https://github.com/hashicorp/memberlist">memberlist</a>做为分布式节点的管理，如果当前使用的节点出现故障时，MetalLB会在新的memberlist中（已删除故障节点）再次选择某个节点进行替换。接着MetalLB会给客户端发送一个“额外的二层包”，告知客户端OS需要更新他们的MAC缓存，而在客户端OS更新缓存前，流量仍会转发到故障节点。因此从某种程度来说，故障转移的时间，就依赖于客户端OS更新MAC缓存的速度。</p>
 <p>3）选节点的hash并非一致性，添加节点有一定概率导致Service的节点发生变化。</p>
-<h2 id="BGP模式"><a href="#BGP模式" class="headerlink" title="BGP模式"></a>BGP模式</h2><p><img src="/img/metallb2.png" srcset="/img/loading.gif"></p>
+<h2 id="BGP模式"><a href="#BGP模式" class="headerlink" title="BGP模式"></a>BGP模式</h2><p><img src="/img/metallb2.jpg" srcset="/img/loading.gif"></p>
 <p>BGP模式不限于一个二层网络里，各个节点都会与交换机建立BGP Peer，宣告Service External IP的下一跳为自身，这样通过ECMP实现了一层负载。客户端请求通过交换机负载到后端某个节点后，再由Kube-proxy进行转发。</p>
 <p>对于<code>externalTrafficPolicy=Local</code>的Service，只有本机存在服务Pod时，才会进行Service External IP的BGP路由宣告。</p>
-<p><img src="/img/MetalLB3.png" srcset="/img/loading.gif"></p>
+<p><img src="/img/MetalLB3.jpg" srcset="/img/loading.gif"></p>
 <p>可以看到这种方式实际上是经过了两层的转发，当Service ExternalTrafficPolicy为Cluster时，每次转发的概率其实是均等的，但当Service ExternalTrafficPolicy为Local时，虽然转发到每个节点的概率是一致的，但每个节点上服务Pod数量不一致，导致每个Pod上的流量其实并不均等。</p>
 <p>在这种模式中，我们希望对于客户端请求的转发遵循会话保持，否则会出现数据包的乱序或丢弃。一般在硬件上，通过对数据包的3元组（源地址、目标地址、协议）或是五元组（三元组加上源端口、目标端口）进行hash，来实现同一会话转发到相同的后端。但需要注意，这种hash一般不是一致性hash，这就导致当后端某个节点的失效后，会对其他连接也会参数影响，扩大了故障的“爆炸半径”。</p>
 <p>官方给了一些缓解的办法，比如在MetalLB和Service后端之间，加入一层有状态的负载——ingress Controller。</p>
