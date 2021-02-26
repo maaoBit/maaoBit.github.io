@@ -1,0 +1,283 @@
+<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>Kubernetes Controller开发利器:controller-runtime - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">Kubernetes Controller开发利器:controller-runtime</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2021-02-26 15:47" pubdate>2021年2月26日 下午</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 3k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 37 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">Kubernetes Controller开发利器:controller-runtime</h1><div class="markdown-body" id="post-body"><p>Controller-runtime是一个用于开发Kubernetes Controller的库，包含了各种Controller常用的模块，兼顾了灵活性和模块化。本文使用V0.8.0版本做介绍。</p><a id="more"></a><p>一开始做Kubernetes Controller开发时，是学习<a target="_blank" rel="noopener" href="https://github.com/kubernetes/sample-controller">simple-controller</a>使用<a target="_blank" rel="noopener" href="https://github.com/kubernetes/client-go">client-go</a>进行开发，中间会有很多与业务无关的重复工作。后来社区推出了<a target="_blank" rel="noopener" href="https://github.com/kubernetes-sigs/kubebuilder">kubebuilder</a>，它可以方便的渲染出Controller的整个框架，让开发者只用专注Controller本身的业务逻辑，特别是在开发CRD时，极为方便，而kubebuilder渲染出的框架使用的则是<a target="_blank" rel="noopener" href="https://github.com/kubernetes-sigs/controller-runtime">controller-runtime</a>。</p><h2 id="主要模块"><a href="#主要模块" class="headerlink" title="主要模块"></a>主要模块</h2><p>Controller-runtime中为Controller的开发提供了各种功能模块，主要包括：</p><ul><li><code>Client</code>：用于读写Kubernetes资源</li><li><code>Cache</code>：本地缓存，可供Client直接读取资源。</li><li><code>Manager</code>：可以管理协调多个Controller，提供Controller共用的依赖。</li><li><code>Controller</code>：“组装”多个模块（例如<code>Source</code>、<code>Queue</code>、<code>Reconciler</code>），实现Kubernetes Controller的通用逻辑：<ul><li>1）监听k8s资源，缓存资源，并根据<code>EventHandler</code>入队事件；</li><li>2）启动多个goroutine，每个goroutine会从队列中获取event，并调用<code>Reconciler</code>方法处理。</li></ul></li><li><code>Reconciler</code>：状态同步的逻辑所在，是开发者需要实现的主要接口，供Controller调用。Reconciler的重点在于“状态同步”，由于Reconciler传入的参数是资源的<code>Namespace</code>和<code>Name</code>，而非event，Reconciler并非用于“处理事件”，而是根据指定资源的状态，来同步“预期集群状态”与“当前集群状态”。</li><li><code>Webhook</code>：用于开发webhook server，实现Kubernetes Admission Webhooks机制。</li><li><code>Source</code>：source of event，Controller从中获取event。</li><li><code>EventHandler</code>：顾名思义，event的处理方法，决定了一个event是否需要入队列、如何入队列。</li><li><code>Predicate</code>：相当于event的过滤器。</li></ul><h2 id="整体架构"><a href="#整体架构" class="headerlink" title="整体架构"></a>整体架构</h2><p><img src="/img/controller-runtime-2021022602.jpg" srcset="/img/loading.gif"></p><p>Controller-runtime目的是提供一系列Kubernetes Controller开发的工具，可以从三方面去了解整个Controller-runtime：</p><ul><li>Controller是如何生成与管理？</li><li>开发者如何与集群交互？</li><li>有哪些额外工具可用？</li></ul><h2 id="Controller的生成与管理"><a href="#Controller的生成与管理" class="headerlink" title="Controller的生成与管理"></a>Controller的生成与管理</h2><p>总的来说，<strong>生成Controller用<code>pkg/builder</code>，管理Controller用<code>pkg/manager</code>。</strong></p><h3 id="Builder"><a href="#Builder" class="headerlink" title="Builder"></a>Builder</h3><p><code>pkg/builder</code>下的<code>Builder</code>可以用于生成Controller，并提供了一系列配置Controller的方法，通过优雅的链式调用，可以组装出自己需要的Controller。</p><p>一般来说，在创建Controller之前，需要先创建manager，因为需要manager提供了创建Controller所需的依赖。下面是一个样例，组装了一个<code>ReplicaSet</code>的<code>Controller</code>，<code>Controller</code>除了监听<code>ReplicaSet</code>外，还会监听Pod，根据Pod的<code>ownerReferences</code>入队相应的<code>ReplicaSet</code>。具体的，先通过<code>ControllerManagerBy()</code>中传入manager，在<code>ControllerManagedBy()</code>和<code>Complete()</code>之间，是一系列对Controller的配置（样例中调用<code>For()</code>和<code>Owns()</code>进行配置），最后在<code>Complete()</code>中，会从manager中获取Controller的依赖，然后和传入的<code>Reconciler</code>一起，用于创建Controller，并将创建的Controller注册到manager中。</p><div class="hljs"><pre><code class="hljs go">err = builder.
+		ControllerManagedBy(mgr).                  <span class="hljs-comment">// Create the ControllerManagedBy</span>
+		For(&amp;appsv1.ReplicaSet&#123;&#125;).                 <span class="hljs-comment">// ReplicaSet is the Application API</span>
+		Owns(&amp;corev1.Pod&#123;&#125;, builder.OnlyMetadata). <span class="hljs-comment">// ReplicaSet owns Pods created by it, and caches them as metadata only</span>
+Complete(reconcile.Func(myReconcile))</code></pre></div><p>除了上面的<code>For()</code>和<code>Owns()</code>外，你还可以对Controller进行更多的配置，比如用<code>WithEventFilter()</code>对Controller的事件进行过滤；用<code>Named()</code>配置Controller的名称等；用<code>Watches()</code>配置其他需要监听的资源。但整体上，你只需要“告诉”Controller “<strong>what to do</strong>“（监听什么资源？对应各种event做何种反应？），而”<strong>how to do</strong>“（如何监听事件，如何缓存对象，如何维护队列）都是由Controller以及其相关依赖完成的。</p><p>在开发复杂的Controller中，你可能要监听多个资源，并且监听的资源与”主资源“（主资源是指<code>For()</code>中配置的资源类型，也是传入<code>Reconciler</code>的元数据所指的资源类型）不存在附属关系，此时<code>Watches()</code>就给了很大的灵活性。<code>Watches()</code>有三个参数，分别为<code>Source</code>、<code>EventHandler</code>、<code>WatchesOption</code>。</p><p>1）<code>Source</code>负责watch相应的资源，将资源的event发送到队列中。其接口只包含一个<code>Start()</code>方法，由Controller调用，用于初始化watch操作所需的相关结构，比如<code>eventHandler</code>、<code>queue</code>等。接口的几个实现在<code>pkg/source/source.go</code>里，开发常使用的，是用于监听K8s的<code>Source</code>实现：<code>Kind</code>。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// Kind is used to provide a source of events originating inside the cluster from Watches (e.g. Pod Create)</span>
+<span class="hljs-keyword">type</span> Kind <span class="hljs-keyword">struct</span> &#123;
+	<span class="hljs-comment">// Type is the type of object to watch.  e.g. &amp;v1.Pod&#123;&#125;</span>
+	Type client.Object
+
+	<span class="hljs-comment">// cache used to watch APIs</span>
+	cache cache.Cache
+&#125;</code></pre></div><p>实际上<code>Kind</code>不实现真正的watch操作，而是通过<code>cache</code>（下面会详细介绍）来watch指定的资源，<code>Kind</code>只是将<code>eventHandler</code>、<code>queue</code>等注册到cache中。使用<code>Kind</code>时，你只需要设置完<code>Type</code>就可以传递给<code>Watches()</code>了，而在后续执行<code>Controller.Watch()</code>时（在<code>Complete()</code>中会调用），会自动调用 manager的<code>SetFields</code>方法注入<code>cache</code>，整个过程对开发人员是透明的。顺便说下，<code>SetFields</code>是Controller用于从manager提取依赖的主要方法，每个Controller都会保存所属的manager的<code>SetFields</code>函数引用。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-params">(cm *controllerManager)</span> <span class="hljs-title">SetFields</span><span class="hljs-params">(i <span class="hljs-keyword">interface</span>&#123;&#125;)</span> <span class="hljs-title">error</span></span> &#123;
+	<span class="hljs-keyword">if</span> _, err := inject.InjectorInto(cm.SetFields, i); err != <span class="hljs-literal">nil</span> &#123;
+		<span class="hljs-keyword">return</span> err
+	&#125;
+	<span class="hljs-keyword">if</span> _, err := inject.StopChannelInto(cm.internalProceduresStop, i); err != <span class="hljs-literal">nil</span> &#123;
+		<span class="hljs-keyword">return</span> err
+	&#125;
+	<span class="hljs-keyword">if</span> _, err := inject.LoggerInto(cm.logger, i); err != <span class="hljs-literal">nil</span> &#123;
+		<span class="hljs-keyword">return</span> err
+	&#125;
+  <span class="hljs-comment">// cluster.SetFields可以将cluster内的cache，注入到i中</span>
+	<span class="hljs-keyword">if</span> err := cm.cluster.SetFields(i); err != <span class="hljs-literal">nil</span> &#123;
+		<span class="hljs-keyword">return</span> err
+	&#125;
+
+	<span class="hljs-keyword">return</span> <span class="hljs-literal">nil</span>
+&#125;</code></pre></div><p>2）<code>EventHandler</code>是一个处理各种Event的接口，需要实现的是“对指定事件如何入队列”的逻辑。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-keyword">type</span> EventHandler <span class="hljs-keyword">interface</span> &#123;
+	<span class="hljs-comment">// Create is called in response to an create event - e.g. Pod Creation.</span>
+	Create(event.CreateEvent, workqueue.RateLimitingInterface)
+
+	<span class="hljs-comment">// Update is called in response to an update event -  e.g. Pod Updated.</span>
+	Update(event.UpdateEvent, workqueue.RateLimitingInterface)
+
+	<span class="hljs-comment">// Delete is called in response to a delete event - e.g. Pod Deleted.</span>
+	Delete(event.DeleteEvent, workqueue.RateLimitingInterface)
+
+	<span class="hljs-comment">// Generic is called in response to an event of an unknown type or a synthetic event triggered as a cron or</span>
+	<span class="hljs-comment">// external trigger request - e.g. reconcile Autoscaling, or a Webhook.</span>
+	Generic(event.GenericEvent, workqueue.RateLimitingInterface)
+&#125;</code></pre></div><p>Controller-runtime已经在<code>pkg/handler</code>下，提供了四类handler：</p><ul><li><code>EnqueueRequestForObject</code>：一个简单的实现，直接将Object的metadata入队列。上面的<code>For()</code>就使用的它。</li><li><code>Enqueue_mapped</code>：用的较多。Object在入队前使用用户实现的映射方法<code>MapFunc()</code>做映射，将映射后的结果入队列。例如可以将<code>Endpoint Event</code>映射为对应的Service，从而入队Service。</li></ul><div class="hljs"><pre><code class="hljs go"><span class="hljs-keyword">type</span> MapFunc <span class="hljs-function"><span class="hljs-keyword">func</span><span class="hljs-params">(client.Object)</span> []<span class="hljs-title">reconcile</span>.<span class="hljs-title">Request</span></span></code></pre></div><ul><li><code>Enqueue_owner</code>：将Object的Owner资源入队列，上面的<code>Owns()</code>就使用的它。</li><li><code>Funcs</code>：一个空的父类，需要你实现接口的四个方法。</li></ul><p>3）最后<code>WatchesOption</code>用于修改Watch配置，目前在<code>pkg/builder/options.go</code>中提供两种：</p><ul><li><code>Predicates</code>：用于过滤事件。你可以自己实现，或者在<code>pkg/predicate/predicate.go</code>中有些预设类型，比如<code>AnnotationChangedPredicate</code>只过滤Annotation发生变化的event。</li></ul><div class="hljs"><pre><code class="hljs go"><span class="hljs-keyword">type</span> Predicate <span class="hljs-keyword">interface</span> &#123;
+	<span class="hljs-comment">// Create returns true if the Create event should be processed</span>
+	Create(event.CreateEvent) <span class="hljs-keyword">bool</span>
+
+	<span class="hljs-comment">// Delete returns true if the Delete event should be processed</span>
+	Delete(event.DeleteEvent) <span class="hljs-keyword">bool</span>
+
+	<span class="hljs-comment">// Update returns true if the Update event should be processed</span>
+	Update(event.UpdateEvent) <span class="hljs-keyword">bool</span>
+
+	<span class="hljs-comment">// Generic returns true if the Generic event should be processed</span>
+	Generic(event.GenericEvent) <span class="hljs-keyword">bool</span>
+&#125;</code></pre></div><ul><li><code>OnlyMetadate</code>：用于告诉Controller，只缓存Watch对象的Metadata数据，用于提升性能。</li></ul><h3 id="Manager"><a href="#Manager" class="headerlink" title="Manager"></a>Manager</h3><p>manager主要是提供了Controller的依赖，并控制Controller的运行，通过如下函数创建。manager对Controller提供的许多依赖都包含在<code>Cluster</code>中，我们后面介绍，这里先介绍manager对Controller运行的控制。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">New</span><span class="hljs-params">(config *rest.Config, options Options)</span> <span class="hljs-params">(Manager, error)</span></span>&#123;&#125;</code></pre></div><p>准确的来说，manager不是控制Controller，而是控制更广泛意义上的“可运行程序”，向manager中注册的都是接口<code>Runnable</code>，你可以注册一个http server到manager中，用manager来启动http server，只要http server实现了对应的<code>Start()</code>接口。要向一个manager中注册<code>Runnable</code>可以使用接口<code>Manager.Add()</code>，上面的<code>Builder.Complete()</code>就调用了此接口。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-keyword">type</span> Runnable <span class="hljs-keyword">interface</span> &#123;
+	Start(context.Context) error
+&#125;</code></pre></div><p>当一个Runnable通过<code>Manager.Add()</code>方法注册到manager中后，manger会根据<code>Runnable</code>是否受“选举机制”的影响，将其分类到<code>leaderElectionRunnables</code>或<code>nonLeaderElectionRunnables</code>两个数组中，依据<code>Runnable</code>可能实现的<code>func NeedLeaderElection() bool</code>方法的返回值进行划分，未实现此方法的会被归类到<code>leaderElectionRunnables</code>中。</p><p>在调用<code>Manager.Start()</code>方法以启动manager后，manager会通过goroutine运行所有注册的<code>Runnable</code>，对于<code>nonLeaderElectionRunnables</code>会直接运行，对于<code>leaderElectionRunnables</code>会根据选举结果运行。在启动manager后，仍然可以通过<code>Manager.Add()</code>方法将其他的<code>Runnable</code>注册到manager中，一旦注册，<code>Runnable</code>就会进入到上面的运行流程。</p><p>manager的选举机制使用<code>k8s.io/client-go/tools/leaderelection</code>实现，可以通过创建manager时传入的<code>manager.Options</code>参数设置，其他更详细的实现可以查看<code>pkg/manager/internal.go</code>。</p><h2 id="与集群的交互"><a href="#与集群的交互" class="headerlink" title="与集群的交互"></a>与集群的交互</h2><p>一般开发Controller需要涉及到与集群的交互，例如从集群或缓存中的操作某个资源；生成K8s Event并记录到集群中。这些功能主要由<code>Cluster</code>接口提供，而<code>Manager</code>接口直接继承了<code>Cluster</code>接口，因此，一般直接使用<code>Manager</code>调用相应的方法。另外，各个Controller也会通过<code>Manager</code>从<code>Cluster</code>中获取集群相关的依赖，例如<code>Scheme</code>、<code>RESTMapper</code>等。</p><h3 id="Cluster"><a href="#Cluster" class="headerlink" title="Cluster"></a>Cluster</h3><p><code>Cluster</code>提供各种与集群相关的方法，开发者常用的接口包括：</p><ul><li>通过<code>Cluster.GetEventRecorderFor()</code>获取用于记录K8s Event的Recorder。</li><li>通过<code>Cluster.GetClient()</code>获取K8s的Client，用于读写。</li><li>通过<code>Cluster.GetCache()</code>获取后端的Cache。</li></ul><p>另外，<code>Cluster</code>也会为Controller的创建提供共同的依赖，例如：</p><ul><li>在<code>Controller.Watch()</code>中，会通过<code>Cluster.SetFields()</code>注入<code>cache</code>、<code>RESTMapper</code>等。</li><li>在<code>Builder.Complate()</code>中，会通过<code>Cluster.Scheme()</code>获取<code>Scheme</code>，从而获取<code>Source</code>对应的<code>GroupVersionKind</code>。</li></ul><p><code>Cluster</code>的详细实现在<code>pkg/cluster</code>下，里面主要涉及两个关键类型：<code>Client</code>和<code>Cache</code>。</p><h4 id="Cache"><a href="#Cache" class="headerlink" title="Cache"></a>Cache</h4><p><code>Cache</code>开发者很少直接使用，因为一般不会直接对<code>Cache</code>进行操作。在Controller-runtime中，<code>Cache</code>的实现是<code>InformerCache</code>，当然，你也可以不使用自定义的Cache实现，通过创建manager时，设置<code>manager.Options.NewCache</code>参数，传入Cache的创建函数。</p><p>从下图可以看到，<code>InformerCache</code>中包含了三组<code>specificInformersMap</code>，分别用于支持<code>structured</code>、<code>unstructured</code>、<code>metadata</code>三种资源类型，实现三类资源的List-watch。而<code>specificInformersMap</code>中包含了一个key为<code>GroupVersionKind</code>、value为<code>MapEntry</code>的Map类型，是为了支持多种资源的监听。<code>MapEntry</code>类似于<code>Client-go</code>中的<code>GenericInformer</code>，里面包含了<code>Client-go</code>中的<code>SharedIndexInformer</code>和<code>Index</code>，因此最终仍然是使用<code>SharedIndexInformer</code>实现资源的List-watch ，使用<code>Index</code>作为本地的缓存。</p><p><img src="/img/controller-runtime-2021022601.jpg" srcset="/img/loading.gif"></p><h4 id="Client"><a href="#Client" class="headerlink" title="Client"></a>Client</h4><p>Controller-runtime实现了多种Client，开发人员一般可以通过<code>Manager.GetClient()</code>与<code>Manager.GetAPIReader()</code>获取manager的Client，区别在于:</p><p>1）<code>Manager.GetClient()</code>返回的Client可以用于Get、Update、Patch、Create等多种操作，但在Get、List时，优先从<code>cache</code>中的读取；</p><p>2）<code>Manager.GetAPIReader()</code>返回的Reader对象用于读操作，但会直接通过请求Kube-apiserver来获取结果。</p><p>与Cache一样，<code>Manager.GetClient()</code>返回的Client也支持操作<code>structured</code>、<code>unstructured</code>、<code>metadata</code>三种资源类型。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-keyword">type</span> client <span class="hljs-keyword">struct</span> &#123;
+	typedClient        typedClient
+	unstructuredClient unstructuredClient
+	metadataClient     metadataClient
+	...
+&#125;</code></pre></div><p>开发人员还可以自己定义manager使用的Client，或者自定义Client是否使用Cache，通过创建manager时，设置<code>manager.Options</code>相关的参数。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// manager.Options健康检查的配置</span>
+<span class="hljs-keyword">type</span> Options <span class="hljs-keyword">struct</span> &#123;
+  ...
+  
+	<span class="hljs-comment">// 自定义Client的创建方法</span>
+	ClientBuilder ClientBuilder
+
+	<span class="hljs-comment">// 设置哪些类型的资源不使用Cache</span>
+	ClientDisableCacheFor []client.Object
+  
+  ...
+&#125;</code></pre></div><h2 id="额外工具"><a href="#额外工具" class="headerlink" title="额外工具"></a>额外工具</h2><h3 id="健康检查"><a href="#健康检查" class="headerlink" title="健康检查"></a>健康检查</h3><p>在manager中集成了健康检查的功能，你可以通过<code>Manager.AddHealthzCheck()</code>与<code>Manager.AddReadyzCheck()</code>方法，注册自己的监控检查逻辑。在<code>Manager.Start()</code>中，会启动一个HTTP Server，提供监控检查的返回结果，HTTP Server的端口、URL可以在创建Manager时，通过<code>manager.Options</code>进行配置。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// manager.Options健康检查的配置</span>
+<span class="hljs-keyword">type</span> Options <span class="hljs-keyword">struct</span> &#123;
+	...
+  
+	<span class="hljs-comment">// HealthProbeBindAddress is the TCP address that the controller should bind to</span>
+	<span class="hljs-comment">// for serving health probes</span>
+	HealthProbeBindAddress <span class="hljs-keyword">string</span>
+
+	<span class="hljs-comment">// Readiness probe endpoint name, defaults to &quot;readyz&quot;</span>
+	ReadinessEndpointName <span class="hljs-keyword">string</span>
+
+	<span class="hljs-comment">// Liveness probe endpoint name, defaults to &quot;healthz&quot;</span>
+	LivenessEndpointName <span class="hljs-keyword">string</span>
+  
+  ...
+&#125;
+</code></pre></div><h3 id="metric"><a href="#metric" class="headerlink" title="metric"></a>metric</h3><p>Controller-runtime内置了许多<code>prometheus</code>的监控指标，主要在<code>pkg/metrics</code>下，定义了<code>Client</code>、<code>Refecltor</code>（Informer中的模块，负责List-Watch资源，并存储到缓存中）以及<code>workQueue</code>相关的监控指标。除此之外在<code>pkg/internal/controller/metrics</code>下还定义Controller状态同步的相关监控指标。</p><p>在manager启动时，会相应的启动metrics server，开发人员还可以通过<code>manager.Options</code>配置metrics server的端口，或是通过<code>pkg/metrics</code>下的<code>Registry</code>方法自定义监控指标。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// manager.Options监控的配置</span>
+<span class="hljs-keyword">type</span> Options <span class="hljs-keyword">struct</span> &#123;
+  ...
+  
+  MetricsBindAddress <span class="hljs-keyword">string</span>
+  
+  ...
+&#125;</code></pre></div><h3 id="webhook"><a href="#webhook" class="headerlink" title="webhook"></a>webhook</h3><blockquote><p>webhook模块目前我还未使用过，后续使用后再补充。</p></blockquote></div><hr><div><div class="post-metas mb-3"><div class="post-meta"><i class="iconfont icon-tags"></i> <a class="hover-with-bg" href="/tags/Controller/">Controller</a></div></div><p class="note note-warning">本博客所有文章除特别声明外，均采用 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.zh" rel="nofollow noopener noopener">CC BY-SA 4.0 协议</a> ，转载请注明出处！</p><div class="post-prevnext row"><article class="post-prev col-6"></article><article class="post-next col-6"> <a href="/2021/02/24/%E7%AC%94%E8%AE%B0-Linux-Socket-Filtering-aka-Berkeley-Packet-Filter-BPF/"><span class="hidden-mobile">[笔记]Linux Socket Filtering aka Berkeley Packet Filter (BPF)</span> <span class="visible-mobile">下一篇</span><i class="iconfont icon-arrowright"></i></a></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
+  (function () {
+    // 查询存储的记录
+    function getRecord(Counter, target) {
+      return new Promise(function (resolve, reject) {
+        Counter('get', '/classes/Counter?where=' + encodeURIComponent(JSON.stringify({target})))
+          .then(resp => resp.json())
+          .then(({results, code, error}) => {
+            if (code === 401) {
+              throw error;
+            }
+            if (results && results.length > 0) {
+              var record = results[0];
+              resolve(record);
+            } else {
+              Counter('post', '/classes/Counter', {target, time: 0})
+                .then(resp => resp.json())
+                .then((record, error) => {
+                  if (error) {
+                    throw error;
+                  }
+                  resolve(record);
+                }).catch(error => {
+                console.error('Failed to create', error);
+                reject(error);
+              });
+            }
+          }).catch((error) => {
+          console.error('LeanCloud Counter Error:', error);
+          reject(error);
+        });
+      })
+    }
+
+    // 发起自增请求
+    function increment(Counter, incrArr) {
+      return new Promise(function (resolve, reject) {
+        Counter('post', '/batch', {
+          "requests": incrArr
+        }).then((res) => {
+          res = res.json();
+          if (res.error) {
+            throw res.error;
+          }
+          resolve(res);
+        }).catch((error) => {
+          console.error('Failed to save visitor count', error);
+          reject(error);
+        });
+      });
+    }
+
+    // 构建自增请求体
+    function buildIncrement(objectId) {
+      return {
+        "method": "PUT",
+        "path": `/1.1/classes/Counter/${ objectId }`,
+        "body": {
+          "time": {
+            '__op': 'Increment',
+            'amount': 1
+          }
+        }
+      }
+    }
+
+    // 校验是否为有效的 UV
+    function validUV() {
+      var key = 'LeanCloud_UV_Flag';
+      var flag = localStorage.getItem(key);
+      if (flag) {
+        // 距离标记小于 24 小时则不计为 UV
+        if (new Date().getTime() - parseInt(flag) <= 86400000) {
+          return false;
+        }
+      }
+      localStorage.setItem(key, new Date().getTime().toString());
+      return true;
+    }
+
+    function addCount(Counter) {
+      var enableIncr = 'true' === 'true' && window.location.hostname !== 'localhost';
+      var getterArr = [];
+      var incrArr = [];
+
+      // 请求 PV 并自增
+      var pvCtn = document.querySelector('#leancloud-site-pv-container');
+      if (pvCtn || enableIncr) {
+        var pvGetter = getRecord(Counter, 'site-pv').then((record) => {
+          incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-pv');
+          if (ele) {
+            ele.innerText = record.time + 1;
+            if (pvCtn) {
+              pvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(pvGetter);
+      }
+
+      // 请求 UV 并自增
+      var uvCtn = document.querySelector('#leancloud-site-uv-container');
+      if (uvCtn || enableIncr) {
+        var uvGetter = getRecord(Counter, 'site-uv').then((record) => {
+          var vuv = validUV();
+          vuv && incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-uv');
+          if (ele) {
+            ele.innerText = record.time + (vuv ? 1 : 0);
+            if (uvCtn) {
+              uvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(uvGetter);
+      }
+
+      // 如果是文章，请求文章的浏览数，并自增
+      if ('true' === 'true') {
+        var viewCtn = document.querySelector('#leancloud-post-views-container');
+        if (viewCtn || enableIncr) {
+          var target = decodeURI('/2021/02/26/Kubernetes-Controller%E5%BC%80%E5%8F%91%E5%88%A9%E5%99%A8-controller-runtime/');
+          var viewGetter = getRecord(Counter, target).then((record) => {
+            incrArr.push(buildIncrement(record.objectId))
+            if (viewCtn) {
+              var ele = document.querySelector('#leancloud-post-views');
+              if (ele) {
+                ele.innerText = (record.time || 0) + 1;
+                viewCtn.style.display = 'inline';
+              }
+            }
+          });
+          getterArr.push(viewGetter);
+        }
+      }
+
+      // 如果启动计数自增，批量发起自增请求
+      if (enableIncr) {
+        Promise.all(getterArr).then(() => {
+          incrArr.length > 0 && increment(Counter, incrArr);
+        })
+      }
+    }
+
+    var app_id = 'rGBkjlpYFYPq3Mztf0uHkwm2-gzGzoHsz'
+    var app_key = 'IwuJ6qbGLXA8pB3qeHHjuDT3'
+    var server_url = 'https://rgbkjlpy.lc-cn-n1-shared.com'
+
+    function fetchData(api_server) {
+      var Counter = (method, url, data) => {
+        return fetch(`${ api_server }/1.1${ url }`, {
+          method,
+          headers: {
+            'X-LC-Id': app_id,
+            'X-LC-Key': app_key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data)
+        });
+      };
+
+      addCount(Counter);
+    }
+
+    var api_server = app_id.slice(-9) !== '-MdYXbMMI' ? server_url : `https://${ app_id.slice(0, 8).toLowerCase() }.api.lncldglobal.com`;
+
+    if (api_server) {
+      fetchData(api_server);
+    } else {
+      fetch('https://app-router.leancloud.cn/2/route?appId=' + app_id)
+        .then(resp => resp.json())
+        .then(({api_server}) => {
+          fetchData('https://' + api_server);
+        });
+    }
+  })();
+</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>
