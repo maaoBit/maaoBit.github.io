@@ -1,4 +1,249 @@
-<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>廉价的K8S LB方案--MetalLB - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">廉价的K8S LB方案--MetalLB</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2021-02-09 11:28" pubdate>2021年2月9日 上午</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 1.7k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 19 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">廉价的K8S LB方案--MetalLB</h1><div class="markdown-body" id="post-body"><p>MetalLB为本地运行的Kubernetes集群提供了LoadBalance功能，使用户像在公有云环境一样，使用K8S的LoadBalancer Service。</p><a id="more"></a><p>在Kubernetes中部署MetalLB后，会有两个部分，一部分是负责监听K8S Service资源变化的Controller，以Deployment的方式部署在整个集群上，另一部分是各个节点上的代理组件Speaker，以DaemonSet方式部署，负责ARP Reply或是BGP的宣告。</p><p>MetalLB有两种模式，一种是二层网络模式，一种是BGP模式。</p><h2 id="二层网络模式"><a href="#二层网络模式" class="headerlink" title="二层网络模式"></a>二层网络模式</h2><p><img src="/img/metallb1.jpg" srcset="/img/loading.gif"></p><p>二层网络模式，顾名思义，所有的流量都在一个二层网络中。此模式下MetalLB其实并未进行负载均衡，而是借助其他组件例如Kube-proxy，来实现负载均衡。具体的，如上图所示，MetalLB将Service External IP（由MetalLB的Controller根据预先设定好的IP段，配置在LoadBalance类型的Service上）配置在K8S集群节点的local网卡上（比如kube-ipvs0），当Client访问Service External IP时，由于在同一个二层，会广播ARP请求，MetalLB会使用某个节点进行ARP Reply（IPv6通过NDP协议），从而Client请求流量会发送到此节点，然后由节点上的Kube-proxy进行负载，转到真正的Pod地址。</p><p>需要说明的是：</p><p>1）Service External IP地址需要与Client在同一网段。</p><p>2）为了使其他节点不对local网卡上的Service External IP进行ARP Reply，节点需要设置<code>arp_ignore=1</code>以及<code>arp_announce=2</code>，或者是设置Kube-proxy的<code>--ipvs-strict-arp</code>参数。</p><p>3）MetalLB对于每个Service会选一个节点，始终由这个节点进行ARP Reply。节点的选择方式是：先过滤出Service后端Pod所在的节点，然后以Service Name、Service Namespace、NodeIP等计算hash值，排序hash值取第一个。</p><p>3）由于上面的选择方式，MetalLB对ExternalTrafficPolicy=Local的Service是支持的，但会导致只用到部分后端Pod实例。</p><p>4）Kube-proxy会同时进行DNAT与SNAT，回包并不是如LVS DR模式，而是原路返回。</p><p>5）Kube-proxy也可以使用其他组件代替，比如Cilium的Kube-proxy replace方案。</p><p>二层网络模式在生产环境中使用有限，原因有二：</p><p>1）扩展性有限。受ARP协议和NDP协议的限制，每个Service都只有一个真正的“入口”，因此这个节点很可能会成为网络瓶颈的所在。</p><p>2）故障转移依赖客户端。MetalLB使用<a target="_blank" rel="noopener" href="https://github.com/hashicorp/memberlist">memberlist</a>做为分布式节点的管理，如果当前使用的节点出现故障时，MetalLB会在新的memberlist中（已删除故障节点）再次选择某个节点进行替换。接着MetalLB会给客户端发送一个“额外的二层包”，告知客户端OS需要更新他们的MAC缓存，而在客户端OS更新缓存前，流量仍会转发到故障节点。因此从某种程度来说，故障转移的时间，就依赖于客户端OS更新MAC缓存的速度。</p><p>3）选节点的hash并非一致性，添加节点有一定概率导致Service的节点发生变化。</p><h2 id="BGP模式"><a href="#BGP模式" class="headerlink" title="BGP模式"></a>BGP模式</h2><p><img src="/img/metallb2.jpg" srcset="/img/loading.gif"></p><p>BGP模式不限于一个二层网络里，各个节点都会与交换机建立BGP Peer，宣告Service External IP的下一跳为自身，这样通过ECMP实现了一层负载。客户端请求通过交换机负载到后端某个节点后，再由Kube-proxy进行转发。</p><p>对于<code>externalTrafficPolicy=Local</code>的Service，只有本机存在服务Pod时，才会进行Service External IP的BGP路由宣告。</p><p><img src="/img/MetalLB3.jpg" srcset="/img/loading.gif"></p><p>可以看到这种方式实际上是经过了两层的转发，当Service ExternalTrafficPolicy为Cluster时，每次转发的概率其实是均等的，但当Service ExternalTrafficPolicy为Local时，虽然转发到每个节点的概率是一致的，但每个节点上服务Pod数量不一致，导致每个Pod上的流量其实并不均等。</p><p>在这种模式中，我们希望对于客户端请求的转发遵循会话保持，否则会出现数据包的乱序或丢弃。一般在硬件上，通过对数据包的3元组（源地址、目标地址、协议）或是五元组（三元组加上源端口、目标端口）进行hash，来实现同一会话转发到相同的后端。但需要注意，这种hash一般不是一致性hash，这就导致当后端某个节点的失效后，会对其他连接也会参数影响，扩大了故障的“爆炸半径”。</p><p>官方给了一些缓解的办法，比如在MetalLB和Service后端之间，加入一层有状态的负载——ingress Controller。</p><p>另外 ，BGP模式下，MetalLB提供了部分参数，来实现对BGP协议的控制，比如BGP community、localpref等。</p><div class="hljs"><pre><code class="hljs routeros">apiVersion: v1
+
+
+<!DOCTYPE html>
+<html lang="zh-CN" data-default-color-scheme=&#34;auto&#34;>
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png">
+  <link rel="icon" type="image/png" href="/img/favicon.png">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="">
+  <meta name="author" content="maao">
+  <meta name="keywords" content="">
+  <title>廉价的K8S LB方案--MetalLB - MAAO的博客</title>
+
+  <link  rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css" />
+
+
+  <link  rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css" />
+  <link  rel="stylesheet" href="/lib/hint/hint.min.css" />
+
+  
+    
+    
+      
+      <link  rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css" />
+    
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css">
+
+
+<link  rel="stylesheet" href="/css/main.css" />
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script  src="/js/utils.js" ></script>
+  <script  src="/js/color-schema.js" ></script>
+<meta name="generator" content="Hexo 5.1.1"></head>
+
+
+<body>
+  <header style="height: 70vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand"
+       href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse"
+            data-target="#navbarSupportedContent"
+            aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                首页
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                归档
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                分类
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                标签
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i
+                class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i
+                class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax=true
+         style="background: url('/img/default.jpg') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+                廉价的K8S LB方案--MetalLB
+              
+            </span>
+
+            
+              <div class="mt-3">
+  
+  
+    <span class="post-meta">
+      <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+      <time datetime="2021-02-09 11:28" pubdate>
+        2021年2月9日 上午
+      </time>
+    </span>
+  
+</div>
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      1.7k 字
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      19
+       分钟
+    </span>
+  
+
+  
+  
+    
+      <!-- LeanCloud 统计文章PV -->
+      <span id="leancloud-post-views-container" class="post-meta" style="display: none">
+        <i class="iconfont icon-eye" aria-hidden="true"></i>
+        <span id="leancloud-post-views"></span> 次
+      </span>
+    
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2"></div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">廉价的K8S LB方案--MetalLB</h1>
+            
+            <div class="markdown-body" id="post-body">
+              <p>MetalLB为本地运行的Kubernetes集群提供了LoadBalance功能，使用户像在公有云环境一样，使用K8S的LoadBalancer Service。</p>
+<a id="more"></a>
+<p>在Kubernetes中部署MetalLB后，会有两个部分，一部分是负责监听K8S Service资源变化的Controller，以Deployment的方式部署在整个集群上，另一部分是各个节点上的代理组件Speaker，以DaemonSet方式部署，负责ARP Reply或是BGP的宣告。</p>
+<p>MetalLB有两种模式，一种是二层网络模式，一种是BGP模式。</p>
+<h2 id="二层网络模式"><a href="#二层网络模式" class="headerlink" title="二层网络模式"></a>二层网络模式</h2><p><img src="/img/metallb1.jpg" srcset="/img/loading.gif"></p>
+<p>二层网络模式，顾名思义，所有的流量都在一个二层网络中。此模式下MetalLB其实并未进行负载均衡，而是借助其他组件例如Kube-proxy，来实现负载均衡。具体的，如上图所示，MetalLB将Service External IP（由MetalLB的Controller根据预先设定好的IP段，配置在LoadBalance类型的Service上）配置在K8S集群节点的local网卡上（比如kube-ipvs0），当Client访问Service External IP时，由于在同一个二层，会广播ARP请求，MetalLB会使用某个节点进行ARP Reply（IPv6通过NDP协议），从而Client请求流量会发送到此节点，然后由节点上的Kube-proxy进行负载，转到真正的Pod地址。</p>
+<p>需要说明的是：</p>
+<p>1）Service External IP地址需要与Client在同一网段。</p>
+<p>2）为了使其他节点不对local网卡上的Service External IP进行ARP Reply，节点需要设置<code>arp_ignore=1</code>以及<code>arp_announce=2</code>，或者是设置Kube-proxy的<code>--ipvs-strict-arp</code>参数。</p>
+<p>3）MetalLB对于每个Service会选一个节点，始终由这个节点进行ARP Reply。节点的选择方式是：先过滤出Service后端Pod所在的节点，然后以Service Name、Service Namespace、NodeIP等计算hash值，排序hash值取第一个。</p>
+<p>3）由于上面的选择方式，MetalLB对ExternalTrafficPolicy=Local的Service是支持的，但会导致只用到部分后端Pod实例。</p>
+<p>4）Kube-proxy会同时进行DNAT与SNAT，回包并不是如LVS DR模式，而是原路返回。</p>
+<p>5）Kube-proxy也可以使用其他组件代替，比如Cilium的Kube-proxy replace方案。</p>
+<p>二层网络模式在生产环境中使用有限，原因有二：</p>
+<p>1）扩展性有限。受ARP协议和NDP协议的限制，每个Service都只有一个真正的“入口”，因此这个节点很可能会成为网络瓶颈的所在。</p>
+<p>2）故障转移依赖客户端。MetalLB使用<a target="_blank" rel="noopener" href="https://github.com/hashicorp/memberlist">memberlist</a>做为分布式节点的管理，如果当前使用的节点出现故障时，MetalLB会在新的memberlist中（已删除故障节点）再次选择某个节点进行替换。接着MetalLB会给客户端发送一个“额外的二层包”，告知客户端OS需要更新他们的MAC缓存，而在客户端OS更新缓存前，流量仍会转发到故障节点。因此从某种程度来说，故障转移的时间，就依赖于客户端OS更新MAC缓存的速度。</p>
+<p>3）选节点的hash并非一致性，添加节点有一定概率导致Service的节点发生变化。</p>
+<h2 id="BGP模式"><a href="#BGP模式" class="headerlink" title="BGP模式"></a>BGP模式</h2><p><img src="/img/metallb2.jpg" srcset="/img/loading.gif"></p>
+<p>BGP模式不限于一个二层网络里，各个节点都会与交换机建立BGP Peer，宣告Service External IP的下一跳为自身，这样通过ECMP实现了一层负载。客户端请求通过交换机负载到后端某个节点后，再由Kube-proxy进行转发。</p>
+<p>对于<code>externalTrafficPolicy=Local</code>的Service，只有本机存在服务Pod时，才会进行Service External IP的BGP路由宣告。</p>
+<p><img src="/img/MetalLB3.jpg" srcset="/img/loading.gif"></p>
+<p>可以看到这种方式实际上是经过了两层的转发，当Service ExternalTrafficPolicy为Cluster时，每次转发的概率其实是均等的，但当Service ExternalTrafficPolicy为Local时，虽然转发到每个节点的概率是一致的，但每个节点上服务Pod数量不一致，导致每个Pod上的流量其实并不均等。</p>
+<p>在这种模式中，我们希望对于客户端请求的转发遵循会话保持，否则会出现数据包的乱序或丢弃。一般在硬件上，通过对数据包的3元组（源地址、目标地址、协议）或是五元组（三元组加上源端口、目标端口）进行hash，来实现同一会话转发到相同的后端。但需要注意，这种hash一般不是一致性hash，这就导致当后端某个节点的失效后，会对其他连接也会参数影响，扩大了故障的“爆炸半径”。</p>
+<p>官方给了一些缓解的办法，比如在MetalLB和Service后端之间，加入一层有状态的负载——ingress Controller。</p>
+<p>另外 ，BGP模式下，MetalLB提供了部分参数，来实现对BGP协议的控制，比如BGP community、localpref等。</p>
+<div class="hljs"><pre><code class="hljs routeros">apiVersion: v1
 kind: ConfigMap
 metadata:
   namespace: metallb-system
@@ -21,7 +266,189 @@ data:
         - no-advertise
       - aggregation-length: 24
     bgp-communities:
-      no-advertise: 65535:65282</code></pre></div><h3 id="类比Calico对Service的BGP"><a href="#类比Calico对Service的BGP" class="headerlink" title="类比Calico对Service的BGP"></a>类比Calico对Service的BGP</h3><p>从Calico v3.4开始，Calico支持对K8S的Service地址进行BGP，其逻辑和MetalLB BGP逻辑基本相同。有几点区别：</p><p>1）默认的情况下，MetalLB是对单个IP进行BGP的，子网掩码是32，但对Calico配置的是一个CIDR，Calico对外BGP的是整个网络段的路由，只有在externalTrafficPolicy为Local时，才会对单个IP进行BGP。</p><p>2）Calico不仅会BGP Service External IP，还可以BGP Service ClusterIP，两者的转发过程是类似的，都是将流量负载到某个K8S节点后，进行SNAT与DNAT。</p><p>3）Calico不负责LoadBalancer Service IP的分配。</p><h2 id="IP地址共享"><a href="#IP地址共享" class="headerlink" title="IP地址共享"></a>IP地址共享</h2><p>默认情况下，MetalLB只会将一个IP地址分配到一个LoadBalancer Service上，用户可以通过<code>spec.loadBalancerIP</code>来指定自己想用的IP，如果用户指定了已被分配了的IP会，则会报错。但MetalLB也提供了方式去支持多个Service共享相同的IP，主要为了解决：K8S不支持对LoadBalancer Service中的Port指定多协议；有限的IP地址资源。</p><p>具体的方式是：创建两个Service，并加上<code>metallb.universe.tf/allow-shared-ip</code>为Key的<code>annotation</code>，表明Service能容忍使用共享的LoadBalancerIP；然后通过<code>spec.loadBalancerIP</code>给两个Service指定共享的IP。</p><p>IP地址共享也有限制：</p><p>1）两个Service的<code>metallb.universe.tf/allow-shared-ip</code>值是一样的。</p><p>2）两个Service的“端口”（带协议）不同，比如<code>tcp/53</code>和<code>udp/53</code>是属于不同的“端口”。</p><p>3）两个Service对应的后端Pod要一致，如果不一致，那么他们的externalTrafficPolicy需要都是Cluster，不然会无法进行正确的BGP。</p><p>目前K8S已经开始支持<a target="_blank" rel="noopener" href="https://github.com/kubernetes/kubernetes/pull/94028">对LoadBalancer Service指定多协议</a>，因此除了MetalLB提供的IP地址共享的方式，也可以使用原生的功能。</p><h2 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h2><p><a target="_blank" rel="noopener" href="https://metallb.universe.tf/">https://metallb.universe.tf/</a></p></div><hr><div><div class="post-metas mb-3"><div class="post-meta"><i class="iconfont icon-tags"></i> <a class="hover-with-bg" href="/tags/metalLB/">metalLB</a></div></div><p class="note note-warning">本博客所有文章除特别声明外，均采用 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.zh" rel="nofollow noopener noopener">CC BY-SA 4.0 协议</a> ，转载请注明出处！</p><div class="post-prevnext row"><article class="post-prev col-6"><a href="/2021/02/23/Calico-BGP%E5%8A%9F%E8%83%BD%E4%BB%8B%E7%BB%8D%EF%BC%9A%E5%AE%9E%E7%8E%B0/"><i class="iconfont icon-arrowleft"></i> <span class="hidden-mobile">Calico BGP功能介绍：实现</span> <span class="visible-mobile">上一篇</span></a></article><article class="post-next col-6"> <a href="/2021/01/26/Calico-BGP%E5%8A%9F%E8%83%BD%E4%BB%8B%E7%BB%8D%EF%BC%9ABIRD%E7%AE%80%E4%BB%8B/"><span class="hidden-mobile">Calico BGP功能介绍：BIRD简介</span> <span class="visible-mobile">下一篇</span><i class="iconfont icon-arrowright"></i></a></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
+      no-advertise: 65535:65282</code></pre></div>
+
+
+
+<h3 id="类比Calico对Service的BGP"><a href="#类比Calico对Service的BGP" class="headerlink" title="类比Calico对Service的BGP"></a>类比Calico对Service的BGP</h3><p>从Calico v3.4开始，Calico支持对K8S的Service地址进行BGP，其逻辑和MetalLB BGP逻辑基本相同。有几点区别：</p>
+<p>1）默认的情况下，MetalLB是对单个IP进行BGP的，子网掩码是32，但对Calico配置的是一个CIDR，Calico对外BGP的是整个网络段的路由，只有在externalTrafficPolicy为Local时，才会对单个IP进行BGP。</p>
+<p>2）Calico不仅会BGP Service External IP，还可以BGP Service ClusterIP，两者的转发过程是类似的，都是将流量负载到某个K8S节点后，进行SNAT与DNAT。</p>
+<p>3）Calico不负责LoadBalancer Service IP的分配。</p>
+<h2 id="IP地址共享"><a href="#IP地址共享" class="headerlink" title="IP地址共享"></a>IP地址共享</h2><p>默认情况下，MetalLB只会将一个IP地址分配到一个LoadBalancer Service上，用户可以通过<code>spec.loadBalancerIP</code>来指定自己想用的IP，如果用户指定了已被分配了的IP会，则会报错。但MetalLB也提供了方式去支持多个Service共享相同的IP，主要为了解决：K8S不支持对LoadBalancer Service中的Port指定多协议；有限的IP地址资源。</p>
+<p>具体的方式是：创建两个Service，并加上<code>metallb.universe.tf/allow-shared-ip</code>为Key的<code>annotation</code>，表明Service能容忍使用共享的LoadBalancerIP；然后通过<code>spec.loadBalancerIP</code>给两个Service指定共享的IP。</p>
+<p>IP地址共享也有限制：</p>
+<p>1）两个Service的<code>metallb.universe.tf/allow-shared-ip</code>值是一样的。</p>
+<p>2）两个Service的“端口”（带协议）不同，比如<code>tcp/53</code>和<code>udp/53</code>是属于不同的“端口”。</p>
+<p>3）两个Service对应的后端Pod要一致，如果不一致，那么他们的externalTrafficPolicy需要都是Cluster，不然会无法进行正确的BGP。</p>
+<p>目前K8S已经开始支持<a target="_blank" rel="noopener" href="https://github.com/kubernetes/kubernetes/pull/94028">对LoadBalancer Service指定多协议</a>，因此除了MetalLB提供的IP地址共享的方式，也可以使用原生的功能。</p>
+<h2 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h2><p><a target="_blank" rel="noopener" href="https://metallb.universe.tf/">https://metallb.universe.tf/</a></p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                
+                  <div class="post-meta">
+                    <i class="iconfont icon-tags"></i>
+                    
+                      <a class="hover-with-bg" href="/tags/metalLB/">metalLB</a>
+                    
+                  </div>
+                
+              </div>
+              
+                <p class="note note-warning">本博客所有文章除特别声明外，转载请注明出处！</p>
+              
+              
+                <div class="post-prevnext row">
+                  <article class="post-prev col-6">
+                    
+                    
+                      <a href="/2021/02/23/Calico-BGP%E5%8A%9F%E8%83%BD%E4%BB%8B%E7%BB%8D%EF%BC%9A%E5%AE%9E%E7%8E%B0/">
+                        <i class="iconfont icon-arrowleft"></i>
+                        <span class="hidden-mobile">Calico BGP功能介绍：实现</span>
+                        <span class="visible-mobile">上一篇</span>
+                      </a>
+                    
+                  </article>
+                  <article class="post-next col-6">
+                    
+                    
+                      <a href="/2021/01/26/Calico-BGP%E5%8A%9F%E8%83%BD%E4%BB%8B%E7%BB%8D%EF%BC%9ABIRD%E7%AE%80%E4%BB%8B/">
+                        <span class="hidden-mobile">Calico BGP功能介绍：BIRD简介</span>
+                        <span class="visible-mobile">下一篇</span>
+                        <i class="iconfont icon-arrowright"></i>
+                      </a>
+                    
+                  </article>
+                </div>
+              
+            </div>
+
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+      <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+        <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p>
+  <div id="tocbot"></div>
+</div>
+
+      </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel"
+     aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">搜索</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v"
+                 for="local-search-input">关键词</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener">
+        <span>Fluid</span></a>
+    </div>
+    
+  <div class="statistics">
+    
+    
+
+    
+      
+        <!-- LeanCloud 统计PV -->
+        <span id="leancloud-site-pv-container" style="display: none">
+            总访问量 
+            <span id="leancloud-site-pv"></span>
+             次
+          </span>
+      
+      
+        <!-- LeanCloud 统计UV -->
+        <span id="leancloud-site-uv-container" style="display: none">
+            总访客数 
+            <span id="leancloud-site-uv"></span>
+             人
+          </span>
+      
+
+    
+  </div>
+
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script  src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js" ></script>
+<script  src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js" ></script>
+<script  src="/js/debouncer.js" ></script>
+<script  src="/js/main.js" ></script>
+
+<!-- Plugins -->
+
+
+  
+    <script  src="/js/lazyload.js" ></script>
+  
+
+
+
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js" ></script>
+  <script  src="/js/clipboard-use.js" ></script>
+
+
+
+  <script defer>
   (function () {
     // 查询存储的记录
     function getRecord(Counter, target) {
@@ -198,7 +625,44 @@ data:
         });
     }
   })();
-</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
+</script>
+
+
+
+
+
+
+  <script  src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js" ></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+
+
+  <script  src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js" ></script>
+  <script>
     anchors.options = {
       placement: "right",
       visible: "hover",
@@ -210,4 +674,67 @@ data:
       res.push(".markdown-body > " + item)
     }
     anchors.add(res.join(", "))
-  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>
+  </script>
+
+
+
+  <script  src="/js/local-search.js" ></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script  src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js" ></script>
+  <link  rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css" />
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

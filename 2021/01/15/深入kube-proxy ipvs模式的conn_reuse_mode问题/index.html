@@ -1,8 +1,238 @@
-<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>深入kube-proxy ipvs模式的conn_reuse_mode问题 - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">深入kube-proxy ipvs模式的conn_reuse_mode问题</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2021-01-15 21:56" pubdate>2021年1月15日 晚上</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 2.3k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 31 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">深入kube-proxy ipvs模式的conn_reuse_mode问题</h1><div class="markdown-body" id="post-body"><p>在高并发、短连接的场景下，kube-proxy ipvs存在rs删除失败或是延迟高的问题，社区也有不少Issue反馈，比如<a target="_blank" rel="noopener" href="https://github.com/kubernetes/kubernetes/issues/81775">kube-proxy ipvs conn_reuse_mode setting causes errors with high load from single client</a>。文本对这些问题进行了梳理，试图介绍产生这些问题的内部原因。由于能力有限，其中涉及内核部分，只能浅尝辄止。</p><a id="more"></a><h2 id="背景"><a href="#背景" class="headerlink" title="背景"></a>背景</h2><h3 id="端口重用"><a href="#端口重用" class="headerlink" title="端口重用"></a>端口重用</h3><p>一切问题来源于端口重用。在TCP四次挥手中有个<code>TIME_WAIT</code>的状态，作为先发送<code>FIN</code>包的一端，在接收到对端发送的<code>FIN</code>包后进入<code>TIME_WAIT</code>，在经过<code>2MSL</code>后才会真正关闭连接。<code>TIME_WAIT</code>状态的存在，一来可以避免将之前连接的延迟报文，作为当前连接的报文处理；二是可以处理最后一个ACK丢失带来的问题。</p><p><img src="/img/2021-01-15-TCP.jpg" srcset="/img/loading.gif"></p><p>而在短连接、高并发的场景下，会出现大量的<code>TIME-WAIT</code>连接，导致资源无法及时释放。Linux中内核参数<code>net.ipv4.tcp_tw_reuse</code>提供了一种减少<code>TIME-WAIT</code>连接的方式，可以将<code>TIME-WAIT</code>连接的端口分配给新的TCP连接，来复用端口。</p><div class="hljs"><pre><code class="hljs text">tcp_tw_reuse - BOOLEAN
+
+
+<!DOCTYPE html>
+<html lang="zh-CN" data-default-color-scheme=&#34;auto&#34;>
+
+
+
+<head>
+  <meta charset="UTF-8">
+  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png">
+  <link rel="icon" type="image/png" href="/img/favicon.png">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  
+  <meta name="theme-color" content="#2f4154">
+  <meta name="description" content="">
+  <meta name="author" content="maao">
+  <meta name="keywords" content="">
+  <title>深入kube-proxy ipvs模式的conn_reuse_mode问题 - MAAO的博客</title>
+
+  <link  rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css" />
+
+
+  <link  rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css" />
+  <link  rel="stylesheet" href="/lib/hint/hint.min.css" />
+
+  
+    
+    
+      
+      <link  rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css" />
+    
+  
+
+  
+
+
+<!-- 主题依赖的图标库，不要自行修改 -->
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css">
+
+
+
+<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css">
+
+
+<link  rel="stylesheet" href="/css/main.css" />
+
+<!-- 自定义样式保持在最底部 -->
+
+
+  <script  src="/js/utils.js" ></script>
+  <script  src="/js/color-schema.js" ></script>
+<meta name="generator" content="Hexo 5.1.1"></head>
+
+
+<body>
+  <header style="height: 70vh;">
+    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
+  <div class="container">
+    <a class="navbar-brand"
+       href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a>
+
+    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse"
+            data-target="#navbarSupportedContent"
+            aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+      <div class="animated-icon"><span></span><span></span><span></span></div>
+    </button>
+
+    <!-- Collapsible content -->
+    <div class="collapse navbar-collapse" id="navbarSupportedContent">
+      <ul class="navbar-nav ml-auto text-center">
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/">
+                <i class="iconfont icon-home-fill"></i>
+                首页
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/archives/">
+                <i class="iconfont icon-archive-fill"></i>
+                归档
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/categories/">
+                <i class="iconfont icon-category-fill"></i>
+                分类
+              </a>
+            </li>
+          
+        
+          
+          
+          
+          
+            <li class="nav-item">
+              <a class="nav-link" href="/tags/">
+                <i class="iconfont icon-tags-fill"></i>
+                标签
+              </a>
+            </li>
+          
+        
+        
+          <li class="nav-item" id="search-btn">
+            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i
+                class="iconfont icon-search"></i>&nbsp;</a>
+          </li>
+        
+        
+          <li class="nav-item" id="color-toggle-btn">
+            <a class="nav-link" href="javascript:">&nbsp;<i
+                class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
+          </li>
+        
+      </ul>
+    </div>
+  </div>
+</nav>
+
+    <div class="banner intro-2" id="background" parallax=true
+         style="background: url('/img/default.jpg') no-repeat center center;
+           background-size: cover;">
+      <div class="full-bg-img">
+        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
+          <div class="container page-header text-center fade-in-up">
+            <span class="h2" id="subtitle">
+              
+                深入kube-proxy ipvs模式的conn_reuse_mode问题
+              
+            </span>
+
+            
+              <div class="mt-3">
+  
+  
+    <span class="post-meta">
+      <i class="iconfont icon-date-fill" aria-hidden="true"></i>
+      <time datetime="2021-01-15 21:56" pubdate>
+        2021年1月15日 晚上
+      </time>
+    </span>
+  
+</div>
+
+<div class="mt-1">
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-chart"></i>
+      2.3k 字
+    </span>
+  
+
+  
+    
+    <span class="post-meta mr-2">
+      <i class="iconfont icon-clock-fill"></i>
+      
+      
+      31
+       分钟
+    </span>
+  
+
+  
+  
+    
+      <!-- LeanCloud 统计文章PV -->
+      <span id="leancloud-post-views-container" class="post-meta" style="display: none">
+        <i class="iconfont icon-eye" aria-hidden="true"></i>
+        <span id="leancloud-post-views"></span> 次
+      </span>
+    
+  
+</div>
+
+            
+          </div>
+
+          
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    
+      
+
+<div class="container-fluid">
+  <div class="row">
+    <div class="d-none d-lg-block col-lg-2"></div>
+    <div class="col-lg-8 nopadding-md">
+      <div class="container nopadding-md" id="board-ctn">
+        <div class="py-5" id="board">
+          <article class="post-content mx-auto" id="post">
+            <!-- SEO header -->
+            <h1 style="display: none">深入kube-proxy ipvs模式的conn_reuse_mode问题</h1>
+            
+            <div class="markdown-body" id="post-body">
+              <p>在高并发、短连接的场景下，kube-proxy ipvs存在rs删除失败或是延迟高的问题，社区也有不少Issue反馈，比如<a target="_blank" rel="noopener" href="https://github.com/kubernetes/kubernetes/issues/81775">kube-proxy ipvs conn_reuse_mode setting causes errors with high load from single client</a>。文本对这些问题进行了梳理，试图介绍产生这些问题的内部原因。由于能力有限，其中涉及内核部分，只能浅尝辄止。</p>
+<a id="more"></a>
+
+<h2 id="背景"><a href="#背景" class="headerlink" title="背景"></a>背景</h2><h3 id="端口重用"><a href="#端口重用" class="headerlink" title="端口重用"></a>端口重用</h3><p>一切问题来源于端口重用。在TCP四次挥手中有个<code>TIME_WAIT</code>的状态，作为先发送<code>FIN</code>包的一端，在接收到对端发送的<code>FIN</code>包后进入<code>TIME_WAIT</code>，在经过<code>2MSL</code>后才会真正关闭连接。<code>TIME_WAIT</code>状态的存在，一来可以避免将之前连接的延迟报文，作为当前连接的报文处理；二是可以处理最后一个ACK丢失带来的问题。</p>
+<p><img src="/img/2021-01-15-TCP.jpg" srcset="/img/loading.gif"></p>
+<p>而在短连接、高并发的场景下，会出现大量的<code>TIME-WAIT</code>连接，导致资源无法及时释放。Linux中内核参数<code>net.ipv4.tcp_tw_reuse</code>提供了一种减少<code>TIME-WAIT</code>连接的方式，可以将<code>TIME-WAIT</code>连接的端口分配给新的TCP连接，来复用端口。</p>
+<div class="hljs"><pre><code class="hljs text">tcp_tw_reuse - BOOLEAN
 	Allow to reuse TIME-WAIT sockets for new connections when it is
 	safe from protocol viewpoint. Default value is 0.
 	It should not be changed without advice/request of technical
-	experts.</code></pre></div><h3 id="ipvs如何处理端口重用？"><a href="#ipvs如何处理端口重用？" class="headerlink" title="ipvs如何处理端口重用？"></a>ipvs如何处理端口重用？</h3><p>ipvs对端口的复用策略主要由内核参数<code>net.ipv4.vs.conn_reuse_mode</code>决定</p><div class="hljs"><pre><code class="hljs text">conn_reuse_mode - INTEGER
+	experts.</code></pre></div>
+
+
+<h3 id="ipvs如何处理端口重用？"><a href="#ipvs如何处理端口重用？" class="headerlink" title="ipvs如何处理端口重用？"></a>ipvs如何处理端口重用？</h3><p>ipvs对端口的复用策略主要由内核参数<code>net.ipv4.vs.conn_reuse_mode</code>决定</p>
+<div class="hljs"><pre><code class="hljs text">conn_reuse_mode - INTEGER
 	1 - default
 
 	Controls how ipvs will deal with connections that are detected
@@ -21,7 +251,11 @@
 	bit 2: it is bit 1 plus, for TCP connections, when connections
 	are in FIN_WAIT state, as this is the last state seen by load
 	balancer in Direct Routing mode. This bit helps on adding new
-	real servers to a very busy cluster.</code></pre></div><p>当<code>net.ipv4.vs.conn_reuse_mode=0</code>时，ipvs不会对新连接进行重新负载，而是复用之前的负载结果，将新连接转发到原来的rs上；当<code>net.ipv4.vs.conn_reuse_mode=1</code>时，ipvs则会对新连接进行重新调度。</p><p>相关的，还有一个内核参数<code>net.ipv4.vs.expire_nodest_conn</code>，用于控制连接的rs不可用时的处理。在开启时，如果后端rs不可用，会立即结束掉该连接，使客户端重新发起新的连接请求；否则将数据包<strong>silently drop</strong>，也就是DROP掉数据包但不结束连接，等待客户端的重试。</p><p>另外，关于<strong>destination 不可用</strong>的判断，是在ipvs执行删除<code>vs</code>（在<code>__ip_vs_del_service()</code>中实现）或删除<code>rs</code>（在<code>ip_vs_del_dest()</code>中实现）时，会调用<code>__ip_vs_unlink_dest()</code>方法，将相应的destination置为不可用。</p><div class="hljs"><pre><code class="hljs text">expire_nodest_conn - BOOLEAN
+	real servers to a very busy cluster.</code></pre></div>
+<p>当<code>net.ipv4.vs.conn_reuse_mode=0</code>时，ipvs不会对新连接进行重新负载，而是复用之前的负载结果，将新连接转发到原来的rs上；当<code>net.ipv4.vs.conn_reuse_mode=1</code>时，ipvs则会对新连接进行重新调度。</p>
+<p>相关的，还有一个内核参数<code>net.ipv4.vs.expire_nodest_conn</code>，用于控制连接的rs不可用时的处理。在开启时，如果后端rs不可用，会立即结束掉该连接，使客户端重新发起新的连接请求；否则将数据包<strong>silently drop</strong>，也就是DROP掉数据包但不结束连接，等待客户端的重试。</p>
+<p>另外，关于<strong>destination 不可用</strong>的判断，是在ipvs执行删除<code>vs</code>（在<code>__ip_vs_del_service()</code>中实现）或删除<code>rs</code>（在<code>ip_vs_del_dest()</code>中实现）时，会调用<code>__ip_vs_unlink_dest()</code>方法，将相应的destination置为不可用。</p>
+<div class="hljs"><pre><code class="hljs text">expire_nodest_conn - BOOLEAN
         0 - disabled (default)
         not 0 - enabled
 
@@ -37,7 +271,9 @@
         destination server is not available, then the client program
         will be notified that the connection is closed. This is
         equivalent to the feature some people requires to flush
-        connections when its destination is not available.</code></pre></div><p> 关于ipvs如何处理端口复用的连接，这块主要实现逻辑在<code>net/netfilter/ipvs/ip_vs_core.c</code>的<code>ip_vs_in()</code>方法中：</p><div class="hljs"><pre><code class="hljs C"><span class="hljs-comment">/*</span>
+        connections when its destination is not available.</code></pre></div>
+<p>  关于ipvs如何处理端口复用的连接，这块主要实现逻辑在<code>net/netfilter/ipvs/ip_vs_core.c</code>的<code>ip_vs_in()</code>方法中：</p>
+<div class="hljs"><pre><code class="hljs C"><span class="hljs-comment">/*</span>
 <span class="hljs-comment"> * Check if the packet belongs to an existing connection entry</span>
 <span class="hljs-comment"> */</span>
 cp = pp-&gt;conn_in_get(ipvs, af, skb, &amp;iph);  <span class="hljs-comment">//找是属于某个已有的connection</span>
@@ -108,7 +344,19 @@ IP_VS_DBG_PKT(<span class="hljs-number">11</span>, af, pp, skb, iph.off, <span c
 	&#125;
 
 	<span class="hljs-keyword">return</span> NF_DROP;
-&#125;</code></pre></div><h3 id="kube-proxy-ipvs模式下的优雅删除"><a href="#kube-proxy-ipvs模式下的优雅删除" class="headerlink" title="kube-proxy ipvs模式下的优雅删除"></a>kube-proxy ipvs模式下的优雅删除</h3><p>Kubernetes提供了Pod优雅删除机制。当我们决定干掉一个Pod时，我们可以通过<code>PreStop Hook</code>来做一些服务下线前的处理，同时Kubernetes也有个<code>grace period</code>，超过这个时间但未完成删除的Pod会被强制删除。</p><p>而在Kubernetes 1.13之前，kube-proxy ipvs模式并不支持优雅删除，当Endpoint被删除时，kube-proxy会直接移除掉ipvs中对应的rs，这样会导致后续的数据包被丢掉。</p><p>在1.13版本后，Kubernetes添加了<a target="_blank" rel="noopener" href="https://github.com/kubernetes/kubernetes/pull/66012">IPVS优雅删除</a>的逻辑，主要是两点：</p><ul><li>当Pod被删除时，kube-proxy会先将rs的<code>weight</code>置为0，以防止新连接的请求发送到此rs，由于不再直接删除rs，旧连接仍能与rs正常通信；</li><li>当rs的<code>ActiveConn</code>数量为0（后面版本已改为<code>ActiveConn+InactiveConn==0</code>)，即不再有连接转发到此rs时，此rs才会真正被移除。</li></ul><h2 id="kube-proxy-ipvs模式下的问题"><a href="#kube-proxy-ipvs模式下的问题" class="headerlink" title="kube-proxy ipvs模式下的问题"></a>kube-proxy ipvs模式下的问题</h2><p>看上去kube-proxy ipvs的删除是优雅了，但当优雅删除正巧碰到端口重用，那问题就来了。</p><p>首先，kube-proxy希望通过设置<code>weight</code>为0，来避免新连接转发到此rs。但当<code>net.ipv4.vs.conn_reuse_mode=0</code>时，对于端口复用的连接，ipvs不会主动进行新的调度（调用<code>ip_vs_try_to_schedule</code>方法）；同时，只是将<code>weight</code>置为0，也并不会触发由<code>expire_nodest_conn</code>控制的结束连接或DROP操作，就这样，新连接的数据包当做什么都没发生一样，发送给了正在删除的Pod。这样一来，只要不断的有端口复用的连接请求发来，rs就不会被kube-proxy删除，上面提到的优雅删除的两点均无法实现。</p><p>而当<code>net.ipv4.vs.conn_reuse_mode=1</code>时，根据<code>ip_vs_in()</code>的处理逻辑，当开启了<code>net.ipv4.vs.conntrack</code>时，会DROP掉第一个SYN包，导致SYN的重传，有1S延迟。而Kube-proxy在IPVS模式下，使用了iptables进行<code>MASQUERADE</code>，也正好开启了<code>net.ipv4.vs.conntrack</code>。</p><div class="hljs"><pre><code class="hljs text">conntrack - BOOLEAN
+&#125;</code></pre></div>
+
+<h3 id="kube-proxy-ipvs模式下的优雅删除"><a href="#kube-proxy-ipvs模式下的优雅删除" class="headerlink" title="kube-proxy ipvs模式下的优雅删除"></a>kube-proxy ipvs模式下的优雅删除</h3><p>Kubernetes提供了Pod优雅删除机制。当我们决定干掉一个Pod时，我们可以通过<code>PreStop Hook</code>来做一些服务下线前的处理，同时Kubernetes也有个<code>grace period</code>，超过这个时间但未完成删除的Pod会被强制删除。</p>
+<p>而在Kubernetes 1.13之前，kube-proxy ipvs模式并不支持优雅删除，当Endpoint被删除时，kube-proxy会直接移除掉ipvs中对应的rs，这样会导致后续的数据包被丢掉。</p>
+<p>在1.13版本后，Kubernetes添加了<a target="_blank" rel="noopener" href="https://github.com/kubernetes/kubernetes/pull/66012">IPVS优雅删除</a>的逻辑，主要是两点：</p>
+<ul>
+<li>当Pod被删除时，kube-proxy会先将rs的<code>weight</code>置为0，以防止新连接的请求发送到此rs，由于不再直接删除rs，旧连接仍能与rs正常通信；</li>
+<li>当rs的<code>ActiveConn</code>数量为0（后面版本已改为<code>ActiveConn+InactiveConn==0</code>)，即不再有连接转发到此rs时，此rs才会真正被移除。</li>
+</ul>
+<h2 id="kube-proxy-ipvs模式下的问题"><a href="#kube-proxy-ipvs模式下的问题" class="headerlink" title="kube-proxy ipvs模式下的问题"></a>kube-proxy ipvs模式下的问题</h2><p>看上去kube-proxy ipvs的删除是优雅了，但当优雅删除正巧碰到端口重用，那问题就来了。</p>
+<p>首先，kube-proxy希望通过设置<code>weight</code>为0，来避免新连接转发到此rs。但当<code>net.ipv4.vs.conn_reuse_mode=0</code>时，对于端口复用的连接，ipvs不会主动进行新的调度（调用<code>ip_vs_try_to_schedule</code>方法）；同时，只是将<code>weight</code>置为0，也并不会触发由<code>expire_nodest_conn</code>控制的结束连接或DROP操作，就这样，新连接的数据包当做什么都没发生一样，发送给了正在删除的Pod。这样一来，只要不断的有端口复用的连接请求发来，rs就不会被kube-proxy删除，上面提到的优雅删除的两点均无法实现。</p>
+<p>而当<code>net.ipv4.vs.conn_reuse_mode=1</code>时，根据<code>ip_vs_in()</code>的处理逻辑，当开启了<code>net.ipv4.vs.conntrack</code>时，会DROP掉第一个SYN包，导致SYN的重传，有1S延迟。而Kube-proxy在IPVS模式下，使用了iptables进行<code>MASQUERADE</code>，也正好开启了<code>net.ipv4.vs.conntrack</code>。</p>
+<div class="hljs"><pre><code class="hljs text">conntrack - BOOLEAN
 	0 - disabled (default)
 	not 0 - enabled
 
@@ -123,9 +371,183 @@ IP_VS_DBG_PKT(<span class="hljs-number">11</span>, af, pp, skb, iph.off, <span c
 	Connections handled by the IPVS FTP application module
 	will have connection tracking entries regardless of this setting.
 
-	Only available when IPVS is compiled with CONFIG_IP_VS_NFCT enabled.</code></pre></div><p>这样看来，目前的情况似乎是，如果你需要实现优雅删除中的“保持旧连接不变，调度新连接”能力，那就要付出1s的延迟代价；如果你要好的性能，那么就不能重新调度。</p><h2 id="如何解决"><a href="#如何解决" class="headerlink" title="如何解决"></a>如何解决</h2><p>从Kubernetes角度来说，Kube-proxy需要在保证性能的前提下，找到一种能让新连接重新调度的方式。但目前从内核代码中可以看到，需要将参数设置如下</p><div class="hljs"><pre><code class="hljs text">net.ipv4.vs.conntrack=0
+	Only available when IPVS is compiled with CONFIG_IP_VS_NFCT enabled.</code></pre></div>
+<p>这样看来，目前的情况似乎是，如果你需要实现优雅删除中的“保持旧连接不变，调度新连接”能力，那就要付出1s的延迟代价；如果你要好的性能，那么就不能重新调度。</p>
+<h2 id="如何解决"><a href="#如何解决" class="headerlink" title="如何解决"></a>如何解决</h2><p>从Kubernetes角度来说，Kube-proxy需要在保证性能的前提下，找到一种能让新连接重新调度的方式。但目前从内核代码中可以看到，需要将参数设置如下</p>
+<div class="hljs"><pre><code class="hljs text">net.ipv4.vs.conntrack=0
 net.ipv4.vs.conn_reuse_mode=1
-net.ipv4.vs.expire_nodest_conn=1</code></pre></div><p>但Kube-proxy ipvs模式目前无法摆脱iptables来完成k8s service的转发。此外，Kube-proxy只有在<code>ActiveConn+InactiveConn==0</code>时才会删除rs，除此之外，在新的Endpoint和<code>GracefulTerminationList</code>（保存了<code>weight</code>为0，但暂未删除的rs）中的rs冲突时，才会立即删除rs。这种逻辑似乎并不合理。目前Pod已有优雅删除的逻辑，而kube-proxy应基于Pod的优雅删除，在网络层面做好rs的优雅删除，因此在kubelet完全删除Pod后，Kube-proxy是否也应该考虑同时删除相应的rs？</p><p>另外，从内核角度来说，ipvs需要提供一种方式，能在端口复用、同时使用conntrack的场景下，可以对新连接直接重新调度。</p><h2 id="即将到来"><a href="#即将到来" class="headerlink" title="即将到来"></a>即将到来</h2><p>这个问题在社区讨论一段时间后，目前出现的几个相关的解决如下：<br><strong>内核两个Patch</strong></p><ul><li><a target="_blank" rel="noopener" href="http://patchwork.ozlabs.org/project/netfilter-devel/patch/20200701151719.4751-1-ja@ssi.bg/">ipvs: allow connection reuse for unconfirmed conntrack</a><br>修改了<code>ip_vs_conn_uses_conntrack()</code>方法的逻辑，当使用<code>unconfirmed conntrack</code>时，返回false，这种修改针对了TIME_WAIT的conntrack。</li><li> <a target="_blank" rel="noopener" href="http://patchwork.ozlabs.org/project/netfilter-devel/patch/20200708161638.13584-1-kim.andrewsy@gmail.com/">ipvs: queue delayed work to expire no destination connections if expire_nodest_conn=1</a><br>提前了<code>expire connection</code>的操作，在destination被删除后，便开始将<code>expire connection</code>操作入队列。而不是等到数据包真正发过来时，才做<code>expire connection</code>，以此来减少数据包的丢失。</li></ul><p><strong>Kubernetes</strong><br><a target="_blank" rel="noopener" href="https://github.com/kubernetes/enhancements/pull/1607">Graceful Termination for External Traffic Policy Local</a><br><a target="_blank" rel="noopener" href="https://github.com/kubernetes/kubernetes/pull/92968">Add Terminating Condition to EndpointSlice</a><br>正如前面所说的，Kube-proxy需要能够感知到Pod的优雅删除过程，来同步进行rs的删除。目前，已有一个相应的KEP在进行中，通过在<code>Endpoint.EndpointConditions</code>中添加<code>terminating</code>字段，来为kube-proxy提供感知方式。</p></div><hr><div><div class="post-metas mb-3"><div class="post-meta"><i class="iconfont icon-tags"></i> <a class="hover-with-bg" href="/tags/kube-proxy/">kube-proxy</a> <a class="hover-with-bg" href="/tags/ipvs/">ipvs</a></div></div><p class="note note-warning">本博客所有文章除特别声明外，均采用 <a target="_blank" href="https://creativecommons.org/licenses/by-sa/4.0/deed.zh" rel="nofollow noopener noopener">CC BY-SA 4.0 协议</a> ，转载请注明出处！</p><div class="post-prevnext row"><article class="post-prev col-6"><a href="/2021/01/26/Calico-BGP%E5%8A%9F%E8%83%BD%E4%BB%8B%E7%BB%8D%EF%BC%9ABIRD%E7%AE%80%E4%BB%8B/"><i class="iconfont icon-arrowleft"></i> <span class="hidden-mobile">Calico BGP功能介绍：BIRD简介</span> <span class="visible-mobile">上一篇</span></a></article><article class="post-next col-6"></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
+net.ipv4.vs.expire_nodest_conn=1</code></pre></div>
+<p>但Kube-proxy ipvs模式目前无法摆脱iptables来完成k8s service的转发。此外，Kube-proxy只有在<code>ActiveConn+InactiveConn==0</code>时才会删除rs，除此之外，在新的Endpoint和<code>GracefulTerminationList</code>（保存了<code>weight</code>为0，但暂未删除的rs）中的rs冲突时，才会立即删除rs。这种逻辑似乎并不合理。目前Pod已有优雅删除的逻辑，而kube-proxy应基于Pod的优雅删除，在网络层面做好rs的优雅删除，因此在kubelet完全删除Pod后，Kube-proxy是否也应该考虑同时删除相应的rs？</p>
+<p>另外，从内核角度来说，ipvs需要提供一种方式，能在端口复用、同时使用conntrack的场景下，可以对新连接直接重新调度。</p>
+<h2 id="即将到来"><a href="#即将到来" class="headerlink" title="即将到来"></a>即将到来</h2><p>这个问题在社区讨论一段时间后，目前出现的几个相关的解决如下：<br><strong>内核两个Patch</strong></p>
+<ul>
+<li><a target="_blank" rel="noopener" href="http://patchwork.ozlabs.org/project/netfilter-devel/patch/20200701151719.4751-1-ja@ssi.bg/">ipvs: allow connection reuse for unconfirmed conntrack</a><br>修改了<code>ip_vs_conn_uses_conntrack()</code>方法的逻辑，当使用<code>unconfirmed conntrack</code>时，返回false，这种修改针对了TIME_WAIT的conntrack。</li>
+<li><a target="_blank" rel="noopener" href="http://patchwork.ozlabs.org/project/netfilter-devel/patch/20200708161638.13584-1-kim.andrewsy@gmail.com/"> ipvs: queue delayed work to expire no destination connections if expire_nodest_conn=1</a><br>提前了<code>expire  connection</code>的操作，在destination被删除后，便开始将<code>expire  connection</code>操作入队列。而不是等到数据包真正发过来时，才做<code>expire  connection</code>，以此来减少数据包的丢失。</li>
+</ul>
+<p><strong>Kubernetes</strong><br><a target="_blank" rel="noopener" href="https://github.com/kubernetes/enhancements/pull/1607">Graceful Termination for External Traffic Policy Local</a><br><a target="_blank" rel="noopener" href="https://github.com/kubernetes/kubernetes/pull/92968">Add Terminating Condition to EndpointSlice</a><br>正如前面所说的，Kube-proxy需要能够感知到Pod的优雅删除过程，来同步进行rs的删除。目前，已有一个相应的KEP在进行中，通过在<code>Endpoint.EndpointConditions</code>中添加<code>terminating</code>字段，来为kube-proxy提供感知方式。</p>
+
+            </div>
+            <hr>
+            <div>
+              <div class="post-metas mb-3">
+                
+                
+                  <div class="post-meta">
+                    <i class="iconfont icon-tags"></i>
+                    
+                      <a class="hover-with-bg" href="/tags/kube-proxy/">kube-proxy</a>
+                    
+                      <a class="hover-with-bg" href="/tags/ipvs/">ipvs</a>
+                    
+                  </div>
+                
+              </div>
+              
+                <p class="note note-warning">本博客所有文章除特别声明外，转载请注明出处！</p>
+              
+              
+                <div class="post-prevnext row">
+                  <article class="post-prev col-6">
+                    
+                    
+                      <a href="/2021/01/26/Calico-BGP%E5%8A%9F%E8%83%BD%E4%BB%8B%E7%BB%8D%EF%BC%9ABIRD%E7%AE%80%E4%BB%8B/">
+                        <i class="iconfont icon-arrowleft"></i>
+                        <span class="hidden-mobile">Calico BGP功能介绍：BIRD简介</span>
+                        <span class="visible-mobile">上一篇</span>
+                      </a>
+                    
+                  </article>
+                  <article class="post-next col-6">
+                    
+                    
+                  </article>
+                </div>
+              
+            </div>
+
+            
+          </article>
+        </div>
+      </div>
+    </div>
+    
+      <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
+        <div id="toc">
+  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p>
+  <div id="tocbot"></div>
+</div>
+
+      </div>
+    
+  </div>
+</div>
+
+<!-- Custom -->
+
+
+    
+  </main>
+
+  
+    <a id="scroll-top-button" href="#" role="button">
+      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
+    </a>
+  
+
+  
+    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel"
+     aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header text-center">
+        <h4 class="modal-title w-100 font-weight-bold">搜索</h4>
+        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body mx-3">
+        <div class="md-form mb-5">
+          <input type="text" id="local-search-input" class="form-control validate">
+          <label data-error="x" data-success="v"
+                 for="local-search-input">关键词</label>
+        </div>
+        <div class="list-group" id="local-search-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+  
+
+  
+
+  
+
+  <footer class="mt-5">
+  <div class="text-center py-3">
+    <div>
+      <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a>
+      <i class="iconfont icon-love"></i>
+      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener">
+        <span>Fluid</span></a>
+    </div>
+    
+  <div class="statistics">
+    
+    
+
+    
+      
+        <!-- LeanCloud 统计PV -->
+        <span id="leancloud-site-pv-container" style="display: none">
+            总访问量 
+            <span id="leancloud-site-pv"></span>
+             次
+          </span>
+      
+      
+        <!-- LeanCloud 统计UV -->
+        <span id="leancloud-site-uv-container" style="display: none">
+            总访客数 
+            <span id="leancloud-site-uv"></span>
+             人
+          </span>
+      
+
+    
+  </div>
+
+
+    
+
+    
+  </div>
+</footer>
+
+<!-- SCRIPTS -->
+<script  src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js" ></script>
+<script  src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js" ></script>
+<script  src="/js/debouncer.js" ></script>
+<script  src="/js/main.js" ></script>
+
+<!-- Plugins -->
+
+
+  
+    <script  src="/js/lazyload.js" ></script>
+  
+
+
+
+  
+
+
+
+  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js" ></script>
+  <script  src="/js/clipboard-use.js" ></script>
+
+
+
+  <script defer>
   (function () {
     // 查询存储的记录
     function getRecord(Counter, target) {
@@ -302,7 +724,44 @@ net.ipv4.vs.expire_nodest_conn=1</code></pre></div><p>但Kube-proxy ipvs模式�
         });
     }
   })();
-</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
+</script>
+
+
+
+
+
+
+  <script  src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js" ></script>
+  <script>
+    $(document).ready(function () {
+      var boardCtn = $('#board-ctn');
+      var boardTop = boardCtn.offset().top;
+
+      tocbot.init({
+        tocSelector: '#tocbot',
+        contentSelector: '#post-body',
+        headingSelector: 'h1,h2,h3,h4,h5,h6',
+        linkClass: 'tocbot-link',
+        activeLinkClass: 'tocbot-active-link',
+        listClass: 'tocbot-list',
+        isCollapsedClass: 'tocbot-is-collapsed',
+        collapsibleClass: 'tocbot-is-collapsible',
+        collapseDepth: 0,
+        scrollSmooth: true,
+        headingsOffset: -boardTop
+      });
+      if ($('.toc-list-item').length > 0) {
+        $('#toc').css('visibility', 'visible');
+      }
+    });
+  </script>
+
+
+
+
+
+  <script  src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js" ></script>
+  <script>
     anchors.options = {
       placement: "right",
       visible: "hover",
@@ -314,4 +773,67 @@ net.ipv4.vs.expire_nodest_conn=1</code></pre></div><p>但Kube-proxy ipvs模式�
       res.push(".markdown-body > " + item)
     }
     anchors.add(res.join(", "))
-  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>
+  </script>
+
+
+
+  <script  src="/js/local-search.js" ></script>
+  <script>
+    var path = "/local-search.xml";
+    var inputArea = document.querySelector("#local-search-input");
+    inputArea.onclick = function () {
+      searchFunc(path, 'local-search-input', 'local-search-result');
+      this.onclick = null
+    }
+  </script>
+
+
+
+  <script  src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js" ></script>
+  <link  rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css" />
+
+  <script>
+    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
+      function () {
+        var element = document.createElement('a');
+        $(element).attr('data-fancybox', 'images');
+        $(element).attr('href', $(this).attr('src'));
+        $(this).wrap(element);
+      }
+    );
+  </script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+  
+
+  
+
+  
+
+  
+
+
+
+
+
+</body>
+</html>

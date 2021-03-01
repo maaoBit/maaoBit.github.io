@@ -60,14 +60,14 @@
 
   
   <url>
-    <loc>https://maao.cloud/tags/kube-proxy/</loc>
+    <loc>https://maao.cloud/tags/calico/</loc>
     <lastmod>2021-03-01</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
-    <loc>https://maao.cloud/tags/ipvs/</loc>
+    <loc>https://maao.cloud/tags/BGP/</loc>
     <lastmod>2021-03-01</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
@@ -81,14 +81,14 @@
   </url>
   
   <url>
-    <loc>https://maao.cloud/tags/calico/</loc>
+    <loc>https://maao.cloud/tags/kube-proxy/</loc>
     <lastmod>2021-03-01</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
-    <loc>https://maao.cloud/tags/BGP/</loc>
+    <loc>https://maao.cloud/tags/ipvs/</loc>
     <lastmod>2021-03-01</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
