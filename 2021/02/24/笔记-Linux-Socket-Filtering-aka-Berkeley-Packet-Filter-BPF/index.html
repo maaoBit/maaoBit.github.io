@@ -1,231 +1,4 @@
-
-
-<!DOCTYPE html>
-<html lang="zh-CN" data-default-color-scheme=&#34;auto&#34;>
-
-
-
-<head>
-  <meta charset="UTF-8">
-  <link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png">
-  <link rel="icon" type="image/png" href="/img/favicon.png">
-  <meta name="viewport"
-        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, shrink-to-fit=no">
-  <meta http-equiv="x-ua-compatible" content="ie=edge">
-  
-  <meta name="theme-color" content="#2f4154">
-  <meta name="description" content="">
-  <meta name="author" content="maao">
-  <meta name="keywords" content="">
-  <title>[笔记]Linux Socket Filtering aka Berkeley Packet Filter (BPF) - MAAO的博客</title>
-
-  <link  rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css" />
-
-
-  <link  rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css" />
-  <link  rel="stylesheet" href="/lib/hint/hint.min.css" />
-
-  
-    
-    
-      
-      <link  rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css" />
-    
-  
-
-  
-
-
-<!-- 主题依赖的图标库，不要自行修改 -->
-
-<link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css">
-
-
-
-<link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css">
-
-
-<link  rel="stylesheet" href="/css/main.css" />
-
-<!-- 自定义样式保持在最底部 -->
-
-
-  <script  src="/js/utils.js" ></script>
-  <script  src="/js/color-schema.js" ></script>
-<meta name="generator" content="Hexo 5.1.1"></head>
-
-
-<body>
-  <header style="height: 70vh;">
-    <nav id="navbar" class="navbar fixed-top  navbar-expand-lg navbar-dark scrolling-navbar">
-  <div class="container">
-    <a class="navbar-brand"
-       href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a>
-
-    <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse"
-            data-target="#navbarSupportedContent"
-            aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
-      <div class="animated-icon"><span></span><span></span><span></span></div>
-    </button>
-
-    <!-- Collapsible content -->
-    <div class="collapse navbar-collapse" id="navbarSupportedContent">
-      <ul class="navbar-nav ml-auto text-center">
-        
-          
-          
-          
-          
-            <li class="nav-item">
-              <a class="nav-link" href="/">
-                <i class="iconfont icon-home-fill"></i>
-                首页
-              </a>
-            </li>
-          
-        
-          
-          
-          
-          
-            <li class="nav-item">
-              <a class="nav-link" href="/archives/">
-                <i class="iconfont icon-archive-fill"></i>
-                归档
-              </a>
-            </li>
-          
-        
-          
-          
-          
-          
-            <li class="nav-item">
-              <a class="nav-link" href="/categories/">
-                <i class="iconfont icon-category-fill"></i>
-                分类
-              </a>
-            </li>
-          
-        
-          
-          
-          
-          
-            <li class="nav-item">
-              <a class="nav-link" href="/tags/">
-                <i class="iconfont icon-tags-fill"></i>
-                标签
-              </a>
-            </li>
-          
-        
-        
-          <li class="nav-item" id="search-btn">
-            <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i
-                class="iconfont icon-search"></i>&nbsp;</a>
-          </li>
-        
-        
-          <li class="nav-item" id="color-toggle-btn">
-            <a class="nav-link" href="javascript:">&nbsp;<i
-                class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a>
-          </li>
-        
-      </ul>
-    </div>
-  </div>
-</nav>
-
-    <div class="banner intro-2" id="background" parallax=true
-         style="background: url('/img/default.jpg') no-repeat center center;
-           background-size: cover;">
-      <div class="full-bg-img">
-        <div class="mask flex-center" style="background-color: rgba(0, 0, 0, 0.3)">
-          <div class="container page-header text-center fade-in-up">
-            <span class="h2" id="subtitle">
-              
-                [笔记]Linux Socket Filtering aka Berkeley Packet Filter (BPF)
-              
-            </span>
-
-            
-              <div class="mt-3">
-  
-  
-    <span class="post-meta">
-      <i class="iconfont icon-date-fill" aria-hidden="true"></i>
-      <time datetime="2021-02-24 15:20" pubdate>
-        2021年2月24日 下午
-      </time>
-    </span>
-  
-</div>
-
-<div class="mt-1">
-  
-    
-    <span class="post-meta mr-2">
-      <i class="iconfont icon-chart"></i>
-      5.3k 字
-    </span>
-  
-
-  
-    
-    <span class="post-meta mr-2">
-      <i class="iconfont icon-clock-fill"></i>
-      
-      
-      83
-       分钟
-    </span>
-  
-
-  
-  
-    
-      <!-- LeanCloud 统计文章PV -->
-      <span id="leancloud-post-views-container" class="post-meta" style="display: none">
-        <i class="iconfont icon-eye" aria-hidden="true"></i>
-        <span id="leancloud-post-views"></span> 次
-      </span>
-    
-  
-</div>
-
-            
-          </div>
-
-          
-        </div>
-      </div>
-    </div>
-  </header>
-
-  <main>
-    
-      
-
-<div class="container-fluid">
-  <div class="row">
-    <div class="d-none d-lg-block col-lg-2"></div>
-    <div class="col-lg-8 nopadding-md">
-      <div class="container nopadding-md" id="board-ctn">
-        <div class="py-5" id="board">
-          <article class="post-content mx-auto" id="post">
-            <!-- SEO header -->
-            <h1 style="display: none">[笔记]Linux Socket Filtering aka Berkeley Packet Filter (BPF)</h1>
-            
-            <div class="markdown-body" id="post-body">
-              <p>本文是阅读<a target="_blank" rel="noopener" href="https://www.kernel.org/doc/Documentation/networking/filter.txt">linux/Documentation/networking/filter.txt</a>文档的笔记。</p>
-<a id="more"></a>
-
-<h2 id="简介"><a href="#简介" class="headerlink" title="简介"></a>简介</h2><p>BPF(Berkeley Packet Filter)允许用户空间程序将过滤器（filter）附加到任何套接字（socket）上，来允许或禁止某些类型的数据通过套接字。可以通过<code>SO_DETACH_FILTER</code>从套接字中卸载filter，但一般使用不到，因为一旦socket关闭，其上的filter也会自动移除。</p>
-<p>可以通过<code>SO_LOCK_FILTER</code>选项为某个filter加锁，加锁后，filter不可在更改或移除，直到socket关闭。</p>
-<p><code>tcpdump</code>通过<code>libpcap</code>的内部编译器生成可加载的指令，通过调用<code>SO_ATTACH_FILTER</code>加载到内核中。</p>
-<p>除socket外，BPF可附加到内核其他地方：netfilter的xt_bpf，内核qdisc层的cls_bpf。</p>
-<h2 id="结构"><a href="#结构" class="headerlink" title="结构"></a>结构</h2><div class="hljs"><pre><code class="hljs rust"><span class="hljs-comment">// 在&lt;linux/filter.h&gt;中</span>
+<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>[笔记]Linux Socket Filtering aka Berkeley Packet Filter (BPF) - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">[笔记]Linux Socket Filtering aka Berkeley Packet Filter (BPF)</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2021-02-24 15:20" pubdate>2021年2月24日 下午</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 5.3k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 83 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">[笔记]Linux Socket Filtering aka Berkeley Packet Filter (BPF)</h1><div class="markdown-body" id="post-body"><p>本文是阅读<a target="_blank" rel="noopener" href="https://www.kernel.org/doc/Documentation/networking/filter.txt">linux/Documentation/networking/filter.txt</a>文档的笔记。</p><a id="more"></a><h2 id="简介"><a href="#简介" class="headerlink" title="简介"></a>简介</h2><p>BPF(Berkeley Packet Filter)允许用户空间程序将过滤器（filter）附加到任何套接字（socket）上，来允许或禁止某些类型的数据通过套接字。可以通过<code>SO_DETACH_FILTER</code>从套接字中卸载filter，但一般使用不到，因为一旦socket关闭，其上的filter也会自动移除。</p><p>可以通过<code>SO_LOCK_FILTER</code>选项为某个filter加锁，加锁后，filter不可在更改或移除，直到socket关闭。</p><p><code>tcpdump</code>通过<code>libpcap</code>的内部编译器生成可加载的指令，通过调用<code>SO_ATTACH_FILTER</code>加载到内核中。</p><p>除socket外，BPF可附加到内核其他地方：netfilter的xt_bpf，内核qdisc层的cls_bpf。</p><h2 id="结构"><a href="#结构" class="headerlink" title="结构"></a>结构</h2><div class="hljs"><pre><code class="hljs rust"><span class="hljs-comment">// 在&lt;linux/filter.h&gt;中</span>
 <span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">sock_filter</span></span> &#123;	<span class="hljs-comment">/* Filter block */</span>
 	__<span class="hljs-built_in">u16</span>	code;   <span class="hljs-comment">/* Actual filter code */</span>
 	__<span class="hljs-built_in">u8</span>	jt;	<span class="hljs-comment">/* Jump true */</span>
@@ -236,9 +9,7 @@
 <span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">sock_fprog</span></span> &#123;			<span class="hljs-comment">/* Required for SO_ATTACH_FILTER. */</span>
 	unsigned short		   len;	<span class="hljs-comment">/* Number of filter blocks */</span>
 	<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">sock_filter</span></span> __user *filter;
-&#125;;</code></pre></div>
-
-<h2 id="例子"><a href="#例子" class="headerlink" title="例子"></a>例子</h2><div class="hljs"><pre><code class="hljs angelscript">#include &lt;sys/socket.h&gt;
+&#125;;</code></pre></div><h2 id="例子"><a href="#例子" class="headerlink" title="例子"></a>例子</h2><div class="hljs"><pre><code class="hljs angelscript">#include &lt;sys/socket.h&gt;
 #include &lt;sys/types.h&gt;
 #include &lt;arpa/inet.h&gt;
 #include &lt;linux/if_ether.h&gt;
@@ -287,33 +58,14 @@ ret = setsockopt(sock, SOL_SOCKET, SO_ATTACH_FILTER, &amp;bpf, sizeof(bpf));
 	<span class="hljs-comment">/* ... bail out ... */</span>
 
 <span class="hljs-comment">/* ... */</span>
-close(sock);</code></pre></div>
-
-<p><code>setsockopt</code>系统调用，调用<code>SO_DETACH_FILTER</code>时无需参数，调用<code>SO_LOCK_FILTER</code>时，参数为1或0：</p>
-<div class="hljs"><pre><code class="hljs lisp">* setsockopt(<span class="hljs-name">sockfd</span>, SOL_SOCKET, SO_ATTACH_FILTER, <span class="hljs-symbol">&amp;val</span>, sizeof(<span class="hljs-name">val</span>))<span class="hljs-comment">;</span>
+close(sock);</code></pre></div><p><code>setsockopt</code>系统调用，调用<code>SO_DETACH_FILTER</code>时无需参数，调用<code>SO_LOCK_FILTER</code>时，参数为1或0：</p><div class="hljs"><pre><code class="hljs lisp">* setsockopt(<span class="hljs-name">sockfd</span>, SOL_SOCKET, SO_ATTACH_FILTER, <span class="hljs-symbol">&amp;val</span>, sizeof(<span class="hljs-name">val</span>))<span class="hljs-comment">;</span>
 * setsockopt(<span class="hljs-name">sockfd</span>, SOL_SOCKET, SO_DETACH_FILTER, <span class="hljs-symbol">&amp;val</span>, sizeof(<span class="hljs-name">val</span>))<span class="hljs-comment">; </span>
-* setsockopt(<span class="hljs-name">sockfd</span>, SOL_SOCKET, SO_LOCK_FILTER,   <span class="hljs-symbol">&amp;val</span>, sizeof(<span class="hljs-name">val</span>))<span class="hljs-comment">;</span></code></pre></div>
-
-<p><code>libpcap</code>覆盖了绝大多数socket filter的用例，一般直接使用<code>libpcap</code>进行开发。</p>
-<h2 id="BPF引擎（engine）和指令集"><a href="#BPF引擎（engine）和指令集" class="headerlink" title="BPF引擎（engine）和指令集"></a>BPF引擎（engine）和指令集</h2><p><code>tool/bpf/</code>目录下的<code>bgf_asm</code>可以用来编写底层的filter。</p>
-<p>BPF包含一个32位累加器A、32位寄存器X、16 x  32位的临时存储：</p>
-<div class="hljs"><pre><code class="hljs lsl">Element          Description
+* setsockopt(<span class="hljs-name">sockfd</span>, SOL_SOCKET, SO_LOCK_FILTER,   <span class="hljs-symbol">&amp;val</span>, sizeof(<span class="hljs-name">val</span>))<span class="hljs-comment">;</span></code></pre></div><p><code>libpcap</code>覆盖了绝大多数socket filter的用例，一般直接使用<code>libpcap</code>进行开发。</p><h2 id="BPF引擎（engine）和指令集"><a href="#BPF引擎（engine）和指令集" class="headerlink" title="BPF引擎（engine）和指令集"></a>BPF引擎（engine）和指令集</h2><p><code>tool/bpf/</code>目录下的<code>bgf_asm</code>可以用来编写底层的filter。</p><p>BPF包含一个32位累加器A、32位寄存器X、16 x 32位的临时存储：</p><div class="hljs"><pre><code class="hljs lsl">Element          Description
 
 A                <span class="hljs-number">32</span> bit wide accumulator
 X                <span class="hljs-number">32</span> bit wide X register
 M[]              <span class="hljs-number">16</span> x <span class="hljs-number">32</span> bit wide misc registers aka <span class="hljs-string">&quot;scratch memory</span>
-<span class="hljs-string">                 store&quot;</span>, addressable from <span class="hljs-number">0</span> to <span class="hljs-number">15</span></code></pre></div>
-
-<p><code>bpf_asm</code>转换生成的程序是一个如下结构的数组。</p>
-<div class="hljs"><pre><code class="hljs angelscript">op:<span class="hljs-number">16</span>, jt:<span class="hljs-number">8</span>, jf:<span class="hljs-number">8</span>, k:<span class="hljs-number">32</span></code></pre></div>
-
-<ul>
-<li><code>op</code> ： 16位的指令</li>
-<li><code>jt</code> <code>jf</code>:  jump if true, jump if false</li>
-<li><code>k</code>：参数</li>
-</ul>
-<p>在<code> linux/filter.h</code>下的指令以及相应的寻址方式：</p>
-<div class="hljs"><pre><code class="hljs angelscript">Instruction      Addressing mode      Description
+<span class="hljs-string">                 store&quot;</span>, addressable from <span class="hljs-number">0</span> to <span class="hljs-number">15</span></code></pre></div><p><code>bpf_asm</code>转换生成的程序是一个如下结构的数组。</p><div class="hljs"><pre><code class="hljs angelscript">op:<span class="hljs-number">16</span>, jt:<span class="hljs-number">8</span>, jf:<span class="hljs-number">8</span>, k:<span class="hljs-number">32</span></code></pre></div><ul><li><code>op</code> ： 16位的指令</li><li><code>jt</code> <code>jf</code>: jump if true, jump if false</li><li><code>k</code>：参数</li></ul><p>在 <code>linux/filter.h</code>下的指令以及相应的寻址方式：</p><div class="hljs"><pre><code class="hljs angelscript">Instruction      Addressing mode      Description
 
   ld               <span class="hljs-number">1</span>, <span class="hljs-number">2</span>, <span class="hljs-number">3</span>, <span class="hljs-number">4</span>, <span class="hljs-number">12</span>       Load word <span class="hljs-built_in">int</span>o A
   ldi              <span class="hljs-number">4</span>                    Load word <span class="hljs-built_in">int</span>o A
@@ -352,9 +104,7 @@ M[]              <span class="hljs-number">16</span> x <span class="hljs-number"
   tax                                   Copy A <span class="hljs-built_in">int</span>o X
   txa                                   Copy X <span class="hljs-built_in">int</span>o A
 
-  ret              <span class="hljs-number">4</span>, <span class="hljs-number">11</span>                Return</code></pre></div>
-
-<div class="hljs"><pre><code class="hljs angelscript">Addressing mode  Syntax               Description
+  ret              <span class="hljs-number">4</span>, <span class="hljs-number">11</span>                Return</code></pre></div><div class="hljs"><pre><code class="hljs angelscript">Addressing mode  Syntax               Description
 
  <span class="hljs-number">0</span>               x/%x                 Register X
  <span class="hljs-number">1</span>               [k]                  BHW at byte offset k <span class="hljs-keyword">in</span> the packet（BHW,二进制半字，<span class="hljs-number">32</span>位）
@@ -368,10 +118,7 @@ M[]              <span class="hljs-number">16</span> x <span class="hljs-number"
  <span class="hljs-number">9</span>               #k,Lt                Jump to Lt <span class="hljs-keyword">if</span> predicate <span class="hljs-keyword">is</span> <span class="hljs-literal">true</span>
 <span class="hljs-number">10</span>               x/%x,Lt              Jump to Lt <span class="hljs-keyword">if</span> predicate <span class="hljs-keyword">is</span> <span class="hljs-literal">true</span>
 <span class="hljs-number">11</span>               a/%a                 Accumulator A
-<span class="hljs-number">12</span>               extension            BPF extension</code></pre></div>
-
-<p>BPF extension寻址配合load指令使用，将查询的结果放到累加器A中。可能的BPF extension包括：</p>
-<div class="hljs"><pre><code class="hljs routeros">Extension                             Description
+<span class="hljs-number">12</span>               extension            BPF extension</code></pre></div><p>BPF extension寻址配合load指令使用，将查询的结果放到累加器A中。可能的BPF extension包括：</p><div class="hljs"><pre><code class="hljs routeros">Extension                             Description
 
 len                                   skb-&gt;len
 proto                                 skb-&gt;protocol
@@ -388,10 +135,7 @@ cpu                                   raw_smp_processor_id()
 vlan_tci                              skb_vlan_tag_get(skb)
 vlan_avail                            skb_vlan_tag_present(skb)
 vlan_tpid                             skb-&gt;vlan_proto
-rand                                  prandom_u32()</code></pre></div>
-
-<p>一些例子：</p>
-<div class="hljs"><pre><code class="hljs avrasm">** ARP packets:
+rand                                  prandom_u32()</code></pre></div><p>一些例子：</p><div class="hljs"><pre><code class="hljs avrasm">** ARP packets:
 
   ldh [<span class="hljs-number">12</span>]          <span class="hljs-comment">/*以太网首部跳过12byte，load half-word，也就是2byte，是以太网的类型字段*/</span>
   jne <span class="hljs-meta">#0x806, drop  /* 不等于0x806则跳转 */</span>
@@ -412,10 +156,7 @@ rand                                  prandom_u32()</code></pre></div>
   <span class="hljs-keyword">ld</span> vlan_tci  <span class="hljs-comment">/*这里用的是extensions的寻址，skb_vlan_tag_get(skb)*/</span>
   jneq <span class="hljs-meta">#10, drop</span>
   <span class="hljs-keyword">ret</span> <span class="hljs-meta">#-1</span>
-  drop: <span class="hljs-keyword">ret</span> <span class="hljs-meta">#0</span></code></pre></div>
-
-<p>上面的代码可以由<code>bpf_asm</code>进行转换，生成<code>xt_bpf</code>和<code>cls_bpf</code>可以直接加载的code</p>
-<div class="hljs"><pre><code class="hljs angelscript">$ ./bpf_asm foo
+  drop: <span class="hljs-keyword">ret</span> <span class="hljs-meta">#0</span></code></pre></div><p>上面的代码可以由<code>bpf_asm</code>进行转换，生成<code>xt_bpf</code>和<code>cls_bpf</code>可以直接加载的code</p><div class="hljs"><pre><code class="hljs angelscript">$ ./bpf_asm foo
 <span class="hljs-number">4</span>,<span class="hljs-number">40</span> <span class="hljs-number">0</span> <span class="hljs-number">0</span> <span class="hljs-number">12</span>,<span class="hljs-number">21</span> <span class="hljs-number">0</span> <span class="hljs-number">1</span> <span class="hljs-number">2054</span>,<span class="hljs-number">6</span> <span class="hljs-number">0</span> <span class="hljs-number">0</span> <span class="hljs-number">4294967295</span>,<span class="hljs-number">6</span> <span class="hljs-number">0</span> <span class="hljs-number">0</span> <span class="hljs-number">0</span>,
 
 In copy <span class="hljs-keyword">and</span> paste C-like output:
@@ -424,15 +165,8 @@ $ ./bpf_asm -c foo
 &#123; <span class="hljs-number">0x28</span>,  <span class="hljs-number">0</span>,  <span class="hljs-number">0</span>, <span class="hljs-number">0x0000000c</span> &#125;,
 &#123; <span class="hljs-number">0x15</span>,  <span class="hljs-number">0</span>,  <span class="hljs-number">1</span>, <span class="hljs-number">0x00000806</span> &#125;,
 &#123; <span class="hljs-number">0x06</span>,  <span class="hljs-number">0</span>,  <span class="hljs-number">0</span>, <span class="hljs-number">0xffffffff</span> &#125;,
-&#123; <span class="hljs-number">0x06</span>,  <span class="hljs-number">0</span>,  <span class="hljs-number">0</span>, <span class="hljs-number">0000000000</span> &#125;,</code></pre></div>
-
-<p><code>tools/bpf/bpf_dbg</code>可以使用pcap文件来调试bpf程序。</p>
-<h2 id="JIT编译器"><a href="#JIT编译器" class="headerlink" title="JIT编译器"></a>JIT编译器</h2><div class="hljs"><pre><code class="hljs awk">echo <span class="hljs-number">1</span> &gt; <span class="hljs-regexp">/proc/</span>sys<span class="hljs-regexp">/net/</span>core<span class="hljs-regexp">/bpf_jit_enable  /</span>*启动*/
-echo <span class="hljs-number">2</span> &gt; <span class="hljs-regexp">/proc/</span>sys<span class="hljs-regexp">/net/</span>core<span class="hljs-regexp">/bpf_jit_enable  /</span>*编译的opcode会输入到内核日志中*/</code></pre></div>
-
-<p>当开启<code>CONFIG_BPF_JIT_ALWAYS_ON</code>时，<code>bpf_jit_enable</code>始终为1。</p>
-<p><code>tools/bpf/</code>下的<code>bpf_jit_disasm</code>可以将内核日志中的十六进制转换成反汇编。</p>
-<div class="hljs"><pre><code class="hljs angelscript"># ./bpf_jit_disasm -o
+&#123; <span class="hljs-number">0x06</span>,  <span class="hljs-number">0</span>,  <span class="hljs-number">0</span>, <span class="hljs-number">0000000000</span> &#125;,</code></pre></div><p><code>tools/bpf/bpf_dbg</code>可以使用pcap文件来调试bpf程序。</p><h2 id="JIT编译器"><a href="#JIT编译器" class="headerlink" title="JIT编译器"></a>JIT编译器</h2><div class="hljs"><pre><code class="hljs awk">echo <span class="hljs-number">1</span> &gt; <span class="hljs-regexp">/proc/</span>sys<span class="hljs-regexp">/net/</span>core<span class="hljs-regexp">/bpf_jit_enable  /</span>*启动*/
+echo <span class="hljs-number">2</span> &gt; <span class="hljs-regexp">/proc/</span>sys<span class="hljs-regexp">/net/</span>core<span class="hljs-regexp">/bpf_jit_enable  /</span>*编译的opcode会输入到内核日志中*/</code></pre></div><p>当开启<code>CONFIG_BPF_JIT_ALWAYS_ON</code>时，<code>bpf_jit_enable</code>始终为1。</p><p><code>tools/bpf/</code>下的<code>bpf_jit_disasm</code>可以将内核日志中的十六进制转换成反汇编。</p><div class="hljs"><pre><code class="hljs angelscript"># ./bpf_jit_disasm -o
 <span class="hljs-number">70</span> bytes emitted <span class="hljs-keyword">from</span> JIT compiler (pass:<span class="hljs-number">3</span>, flen:<span class="hljs-number">6</span>)
 ffffffffa0069c8f + &lt;x&gt;:
    <span class="hljs-number">0</span>:	push   %rbp
@@ -474,36 +208,7 @@ ffffffffa0069c8f + &lt;x&gt;:
   <span class="hljs-number">44</span>:	leaveq
 	c9
   <span class="hljs-number">45</span>:	retq
-	c3</code></pre></div>
-
-<h2 id="BPF内核实现"><a href="#BPF内核实现" class="headerlink" title="BPF内核实现"></a>BPF内核实现</h2><p>内核中解释器使用的指令和上面描述的BPF指令集不同，更接近底层架构，以便获得更高的性能，被称为eBPF或internal BPF。新指令集可以通过“受限C语言”编写程序，并通过GCC/LLVM编译为eBPF，<strong>C -&gt; eBPF -&gt; native code</strong></p>
-<p>内核调用<code>bpf_prog_create()</code>和<code>bpf_prog_destroy()</code>来创建和销毁filter，调用<code>BPG_PROG_RUN(filter,ctx)</code>宏进行解释与运行，这些都是透明的。参数filter为<code>bpf_prog</code>结构体，由<code>bpf_prog_create()</code>返回，ctx为给定的上下文，例如skb的指针。<code>bpf_check_classic()</code>的所有约束和限制会在转换之前执行。</p>
-<p>eBPF的主要变化：</p>
-<ul>
-<li><p>寄存器数量由2变为10</p>
-<ul>
-<li>R0：保存eBPF或辅助函数的返回值</li>
-<li>R1-R5：存储调用辅助函数需要传递的参数</li>
-<li>R6-R9：用于存储中间值，辅助函数将保持这些寄存器不改变</li>
-<li>R10：只读寄存器，包含访问BPF stack的指针</li>
-</ul>
-<p>只有一个主eBPF程序，它只能调用其他辅助函数，而非其他BPF程序（注：现在应该支持BPF之间的调用）</p>
-</li>
-<li><p>寄存器由32位变为64位</p>
-<ul>
-<li>仍然保留了32位的ALU操作语义，使用64位寄存器的32位子寄存器保存</li>
-</ul>
-</li>
-<li><p>条件jt/jf替换为jt/fall-through</p>
-</li>
-<li><p>引入<code>bpf_call</code>和寄存器传递约定</p>
-<ul>
-<li><p>调用辅助函数前，根据辅助函数规定，将参数存储至R1-R5上。R1-R5寄存器映射到CPU的寄存器上，调用无性能损耗。</p>
-</li>
-<li><p>调用辅助函数后，R1-R5不可读，R0存储返回的值，R6-R9正在调用期间不会改变。eBPF程序只有1一个<code>ctx</code>，保存在R1上。</p>
-</li>
-</ul>
-<div class="hljs"><pre><code class="hljs armasm"><span class="hljs-symbol">u64</span> <span class="hljs-built_in">f1</span>() &#123; return (*_<span class="hljs-built_in">f2</span>)(<span class="hljs-number">1</span>)<span class="hljs-comment">; &#125;</span>
+	c3</code></pre></div><h2 id="BPF内核实现"><a href="#BPF内核实现" class="headerlink" title="BPF内核实现"></a>BPF内核实现</h2><p>内核中解释器使用的指令和上面描述的BPF指令集不同，更接近底层架构，以便获得更高的性能，被称为eBPF或internal BPF。新指令集可以通过“受限C语言”编写程序，并通过GCC/LLVM编译为eBPF，<strong>C -&gt; eBPF -&gt; native code</strong></p><p>内核调用<code>bpf_prog_create()</code>和<code>bpf_prog_destroy()</code>来创建和销毁filter，调用<code>BPG_PROG_RUN(filter,ctx)</code>宏进行解释与运行，这些都是透明的。参数filter为<code>bpf_prog</code>结构体，由<code>bpf_prog_create()</code>返回，ctx为给定的上下文，例如skb的指针。<code>bpf_check_classic()</code>的所有约束和限制会在转换之前执行。</p><p>eBPF的主要变化：</p><ul><li><p>寄存器数量由2变为10</p><ul><li>R0：保存eBPF或辅助函数的返回值</li><li>R1-R5：存储调用辅助函数需要传递的参数</li><li>R6-R9：用于存储中间值，辅助函数将保持这些寄存器不改变</li><li>R10：只读寄存器，包含访问BPF stack的指针</li></ul><p>只有一个主eBPF程序，它只能调用其他辅助函数，而非其他BPF程序（注：现在应该支持BPF之间的调用）</p></li><li><p>寄存器由32位变为64位</p><ul><li>仍然保留了32位的ALU操作语义，使用64位寄存器的32位子寄存器保存</li></ul></li><li><p>条件jt/jf替换为jt/fall-through</p></li><li><p>引入<code>bpf_call</code>和寄存器传递约定</p><ul><li><p>调用辅助函数前，根据辅助函数规定，将参数存储至R1-R5上。R1-R5寄存器映射到CPU的寄存器上，调用无性能损耗。</p></li><li><p>调用辅助函数后，R1-R5不可读，R0存储返回的值，R6-R9正在调用期间不会改变。eBPF程序只有1一个<code>ctx</code>，保存在R1上。</p></li></ul><div class="hljs"><pre><code class="hljs armasm"><span class="hljs-symbol">u64</span> <span class="hljs-built_in">f1</span>() &#123; return (*_<span class="hljs-built_in">f2</span>)(<span class="hljs-number">1</span>)<span class="hljs-comment">; &#125;</span>
 <span class="hljs-symbol">u64</span> <span class="hljs-built_in">f2</span>(u64 a) &#123; return <span class="hljs-built_in">f3</span>(a + <span class="hljs-number">1</span>, a)<span class="hljs-comment">; &#125;</span>
 <span class="hljs-symbol">u64</span> <span class="hljs-built_in">f3</span>(u64 a, u64 b) &#123; return a - b<span class="hljs-comment">; &#125;</span>
 <span class="hljs-comment">// f2的eBPF看起来类似</span>
@@ -511,13 +216,7 @@ ffffffffa0069c8f + &lt;x&gt;:
   bpf_mov <span class="hljs-built_in">R2</span>, <span class="hljs-built_in">R1</span>
   bpf_add <span class="hljs-built_in">R1</span>, <span class="hljs-number">1</span>
   bpf_call <span class="hljs-built_in">f3</span>
-  bpf_exit</code></pre></div>
-
-
-</li>
-</ul>
-<p>x86_64中，64位寄存器与HW寄存器的对应：</p>
-<div class="hljs"><pre><code class="hljs x86asm"><span class="hljs-built_in">R0</span> - <span class="hljs-built_in">rax</span>
+  bpf_exit</code></pre></div></li></ul><p>x86_64中，64位寄存器与HW寄存器的对应：</p><div class="hljs"><pre><code class="hljs x86asm"><span class="hljs-built_in">R0</span> - <span class="hljs-built_in">rax</span>
 <span class="hljs-built_in">R1</span> - <span class="hljs-built_in">rdi</span>
 <span class="hljs-built_in">R2</span> - <span class="hljs-built_in">rsi</span>
 <span class="hljs-built_in">R3</span> - <span class="hljs-built_in">rdx</span>
@@ -527,16 +226,10 @@ ffffffffa0069c8f + &lt;x&gt;:
 <span class="hljs-built_in">R7</span> - <span class="hljs-built_in">r13</span>
 <span class="hljs-built_in">R8</span> - <span class="hljs-built_in">r14</span>
 <span class="hljs-built_in">R9</span> - <span class="hljs-built_in">r15</span>
-<span class="hljs-built_in">R10</span> - <span class="hljs-built_in">rbp</span></code></pre></div>
-
-<p>x86_64下，C语言</p>
-<div class="hljs"><pre><code class="hljs angelscript">u64 bpf_filter(u64 ctx)
+<span class="hljs-built_in">R10</span> - <span class="hljs-built_in">rbp</span></code></pre></div><p>x86_64下，C语言</p><div class="hljs"><pre><code class="hljs angelscript">u64 bpf_filter(u64 ctx)
 &#123;
     <span class="hljs-keyword">return</span> foo(ctx, <span class="hljs-number">2</span>, <span class="hljs-number">3</span>, <span class="hljs-number">4</span>, <span class="hljs-number">5</span>) + bar(ctx, <span class="hljs-number">6</span>, <span class="hljs-number">7</span>, <span class="hljs-number">8</span>, <span class="hljs-number">9</span>);
-&#125;</code></pre></div>
-
-<p>对应的BPF</p>
-<div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">bpf_mov</span> R<span class="hljs-number">6</span>, R<span class="hljs-number">1</span> /* save ctx */
+&#125;</code></pre></div><p>对应的BPF</p><div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">bpf_mov</span> R<span class="hljs-number">6</span>, R<span class="hljs-number">1</span> /* save ctx */
 <span class="hljs-attribute">bpf_mov</span> R<span class="hljs-number">2</span>, <span class="hljs-number">2</span>
 <span class="hljs-attribute">bpf_mov</span> R<span class="hljs-number">3</span>, <span class="hljs-number">3</span>
 <span class="hljs-attribute">bpf_mov</span> R<span class="hljs-number">4</span>, <span class="hljs-number">4</span>
@@ -550,10 +243,7 @@ ffffffffa0069c8f + &lt;x&gt;:
 <span class="hljs-attribute">bpf_mov</span> R<span class="hljs-number">5</span>, <span class="hljs-number">9</span>
 <span class="hljs-attribute">bpf_call</span> bar
 <span class="hljs-attribute">bpf_add</span> R<span class="hljs-number">0</span>, R<span class="hljs-number">7</span>
-<span class="hljs-attribute">bpf_exit</span></code></pre></div>
-
-<p>对应的JIT编译结果</p>
-<div class="hljs"><pre><code class="hljs mel">push %rbp
+<span class="hljs-attribute">bpf_exit</span></code></pre></div><p>对应的JIT编译结果</p><div class="hljs"><pre><code class="hljs mel">push %rbp
 mov %rsp,%rbp
 sub $0x228,%rsp
 mov %rbx,<span class="hljs-number">-0x228</span>(%rbp)
@@ -575,29 +265,11 @@ add %r13,%rax
 mov <span class="hljs-number">-0x228</span>(%rbp),%rbx
 mov <span class="hljs-number">-0x220</span>(%rbp),%r13
 leaveq
-retq</code></pre></div>
-
-<p>为了保证eBPF程序迅速停止，eBPF程序限制只能有4096条指令。（注：现在限制扩到了100W）</p>
-<p>根据不同用例，ctx中的内容不同。对于seccomp，R1指向<code>seccomp_data</code>；对于BPF filters，R1指向<code>skb</code>。</p>
-<blockquote>
-<p>注：Seccomp(全称：secure computing mode)在2.6.12版本中引入linux内核，作为一种安全机制，主要用于限制用户态程序对系统调用的滥用。由于限制太强，后引入seccomp-bpf，借助bpf规则来过滤系统调用。</p>
-</blockquote>
-<p>指令的转换：</p>
-<div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">op</span>:<span class="hljs-number">16</span>, jt:<span class="hljs-number">8</span>, jf:<span class="hljs-number">8</span>, k:<span class="hljs-number">32</span>    ==&gt;    op:<span class="hljs-number">8</span>, dst_reg:<span class="hljs-number">4</span>, src_reg:<span class="hljs-number">4</span>, <span class="hljs-literal">off</span>:<span class="hljs-number">16</span>, imm:<span class="hljs-number">32</span></code></pre></div>
-
-<ul>
-<li>目前内部BPF（eBPF）指令已有87条。</li>
-<li>内部BPF是一个通用的RISC指令集。复杂的过滤器可能耗尽寄存器，需要使用到堆栈。</li>
-<li>程序的安全性通过两个步骤确定：深度优先搜索，禁止循环，并进行其他CFG验证；从第一个指令开始，探测所有可能的路径，观察寄存器和堆栈的状态变化。</li>
-</ul>
-<h2 id="eBPF-opcode"><a href="#eBPF-opcode" class="headerlink" title="eBPF opcode"></a>eBPF opcode</h2><h3 id="对于arithmetic-和jump指令"><a href="#对于arithmetic-和jump指令" class="headerlink" title="对于arithmetic 和jump指令"></a>对于arithmetic 和jump指令</h3><div class="hljs"><pre><code class="hljs asciidoc"><span class="hljs-code">+----------------+</span>--------<span class="hljs-code">+--------------------+</span>
+retq</code></pre></div><p>为了保证eBPF程序迅速停止，eBPF程序限制只能有4096条指令。（注：现在限制扩到了100W）</p><p>根据不同用例，ctx中的内容不同。对于seccomp，R1指向<code>seccomp_data</code>；对于BPF filters，R1指向<code>skb</code>。</p><blockquote><p>注：Seccomp(全称：secure computing mode)在2.6.12版本中引入linux内核，作为一种安全机制，主要用于限制用户态程序对系统调用的滥用。由于限制太强，后引入seccomp-bpf，借助bpf规则来过滤系统调用。</p></blockquote><p>指令的转换：</p><div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">op</span>:<span class="hljs-number">16</span>, jt:<span class="hljs-number">8</span>, jf:<span class="hljs-number">8</span>, k:<span class="hljs-number">32</span>    ==&gt;    op:<span class="hljs-number">8</span>, dst_reg:<span class="hljs-number">4</span>, src_reg:<span class="hljs-number">4</span>, <span class="hljs-literal">off</span>:<span class="hljs-number">16</span>, imm:<span class="hljs-number">32</span></code></pre></div><ul><li>目前内部BPF（eBPF）指令已有87条。</li><li>内部BPF是一个通用的RISC指令集。复杂的过滤器可能耗尽寄存器，需要使用到堆栈。</li><li>程序的安全性通过两个步骤确定：深度优先搜索，禁止循环，并进行其他CFG验证；从第一个指令开始，探测所有可能的路径，观察寄存器和堆栈的状态变化。</li></ul><h2 id="eBPF-opcode"><a href="#eBPF-opcode" class="headerlink" title="eBPF opcode"></a>eBPF opcode</h2><h3 id="对于arithmetic-和jump指令"><a href="#对于arithmetic-和jump指令" class="headerlink" title="对于arithmetic 和jump指令"></a>对于arithmetic 和jump指令</h3><div class="hljs"><pre><code class="hljs asciidoc"><span class="hljs-code">+----------------+</span>--------<span class="hljs-code">+--------------------+</span>
 |   4 bits       |  1 bit |   3 bits           |
 | operation code | source | instruction class  |
 <span class="hljs-code">+----------------+</span>--------<span class="hljs-code">+--------------------+</span>
-(MSB)                                      (LSB)</code></pre></div>
-
-<p>最后3bit的LSB存储指令类别：</p>
-<div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">Classic</span> BPF classes:    eBPF classes:
+(MSB)                                      (LSB)</code></pre></div><p>最后3bit的LSB存储指令类别：</p><div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">Classic</span> BPF classes:    eBPF classes:
 
  <span class="hljs-attribute">BPF_LD</span>    <span class="hljs-number">0</span>x<span class="hljs-number">00</span>          BPF_LD    <span class="hljs-number">0</span>x<span class="hljs-number">00</span>
  <span class="hljs-attribute">BPF_LDX</span>   <span class="hljs-number">0</span>x<span class="hljs-number">01</span>          BPF_LDX   <span class="hljs-number">0</span>x<span class="hljs-number">01</span>
@@ -606,12 +278,7 @@ retq</code></pre></div>
  <span class="hljs-attribute">BPF_ALU</span>   <span class="hljs-number">0</span>x<span class="hljs-number">04</span>          BPF_ALU   <span class="hljs-number">0</span>x<span class="hljs-number">04</span>
  <span class="hljs-attribute">BPF_JMP</span>   <span class="hljs-number">0</span>x<span class="hljs-number">05</span>          BPF_JMP   <span class="hljs-number">0</span>x<span class="hljs-number">05</span>
  <span class="hljs-attribute">BPF_RET</span>   <span class="hljs-number">0</span>x<span class="hljs-number">06</span>          BPF_JMP<span class="hljs-number">32</span> <span class="hljs-number">0</span>x<span class="hljs-number">06</span>
- <span class="hljs-attribute">BPF_MISC</span>  <span class="hljs-number">0</span>x<span class="hljs-number">07</span>          BPF_ALU<span class="hljs-number">64</span> <span class="hljs-number">0</span>x<span class="hljs-number">07</span></code></pre></div>
-
-<ul>
-<li>当PF_CLASS(code) == BPF_ALU或BPF_JMP时，第四位（source部分）可以为</li>
-</ul>
-<div class="hljs"><pre><code class="hljs mipsasm"><span class="hljs-keyword">BPF_K </span>    <span class="hljs-number">0x00</span>
+ <span class="hljs-attribute">BPF_MISC</span>  <span class="hljs-number">0</span>x<span class="hljs-number">07</span>          BPF_ALU<span class="hljs-number">64</span> <span class="hljs-number">0</span>x<span class="hljs-number">07</span></code></pre></div><ul><li>当PF_CLASS(code) == BPF_ALU或BPF_JMP时，第四位（source部分）可以为</li></ul><div class="hljs"><pre><code class="hljs mipsasm"><span class="hljs-keyword">BPF_K </span>    <span class="hljs-number">0x00</span>
  <span class="hljs-keyword">BPF_X </span>    <span class="hljs-number">0x08</span>
 
 * in classic <span class="hljs-keyword">BPF, </span>this means:
@@ -622,12 +289,7 @@ retq</code></pre></div>
 * in eBPF, this means:
 
  <span class="hljs-keyword">BPF_SRC(code) </span>== <span class="hljs-keyword">BPF_X </span>- use <span class="hljs-string">&#x27;src_reg&#x27;</span> register as source operand
- <span class="hljs-keyword">BPF_SRC(code) </span>== <span class="hljs-keyword">BPF_K </span>- use <span class="hljs-number">32</span>-<span class="hljs-keyword">bit </span>immediate as source operand</code></pre></div>
-
-<ul>
-<li>当BPF_CLASS(code) == BPF_ALU或BPF_ALU64 ，前四位BPF_OP(code)可以为：</li>
-</ul>
-<div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">BPF_ADD</span>   <span class="hljs-number">0</span>x<span class="hljs-number">00</span>
+ <span class="hljs-keyword">BPF_SRC(code) </span>== <span class="hljs-keyword">BPF_K </span>- use <span class="hljs-number">32</span>-<span class="hljs-keyword">bit </span>immediate as source operand</code></pre></div><ul><li>当BPF_CLASS(code) == BPF_ALU或BPF_ALU64 ，前四位BPF_OP(code)可以为：</li></ul><div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">BPF_ADD</span>   <span class="hljs-number">0</span>x<span class="hljs-number">00</span>
 <span class="hljs-attribute">BPF_SUB</span>   <span class="hljs-number">0</span>x<span class="hljs-number">10</span>
 <span class="hljs-attribute">BPF_MUL</span>   <span class="hljs-number">0</span>x<span class="hljs-number">20</span>
 <span class="hljs-attribute">BPF_DIV</span>   <span class="hljs-number">0</span>x<span class="hljs-number">30</span>
@@ -640,10 +302,7 @@ retq</code></pre></div>
 <span class="hljs-attribute">BPF_XOR</span>   <span class="hljs-number">0</span>xa<span class="hljs-number">0</span>
 <span class="hljs-attribute">BPF_MOV</span>   <span class="hljs-number">0</span>xb<span class="hljs-number">0</span>  /* eBPF only: mov reg to reg */
 <span class="hljs-attribute">BPF_ARSH</span>  <span class="hljs-number">0</span>xc<span class="hljs-number">0</span>  /* eBPF only: sign extending shift right */
-<span class="hljs-attribute">BPF_END</span>   <span class="hljs-number">0</span>xd<span class="hljs-number">0</span>  /* eBPF only: endianness conversion */</code></pre></div>
-
-<p>当BPF_CLASS(code) == BPF_JMP或BPF_JMP32，前四位BPF_OP(code)可以为：</p>
-<div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">BPF_JA</span>    <span class="hljs-number">0</span>x<span class="hljs-number">00</span>  /* BPF_JMP only */
+<span class="hljs-attribute">BPF_END</span>   <span class="hljs-number">0</span>xd<span class="hljs-number">0</span>  /* eBPF only: endianness conversion */</code></pre></div><p>当BPF_CLASS(code) == BPF_JMP或BPF_JMP32，前四位BPF_OP(code)可以为：</p><div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">BPF_JA</span>    <span class="hljs-number">0</span>x<span class="hljs-number">00</span>  /* BPF_JMP only */
 <span class="hljs-attribute">BPF_JEQ</span>   <span class="hljs-number">0</span>x<span class="hljs-number">10</span>
 <span class="hljs-attribute">BPF_JGT</span>   <span class="hljs-number">0</span>x<span class="hljs-number">20</span>
 <span class="hljs-attribute">BPF_JGE</span>   <span class="hljs-number">0</span>x<span class="hljs-number">30</span>
@@ -656,19 +315,11 @@ retq</code></pre></div>
 <span class="hljs-attribute">BPF_JLT</span>   <span class="hljs-number">0</span>xa<span class="hljs-number">0</span>  /* eBPF only: unsigned &#x27;&lt;&#x27; */
 <span class="hljs-attribute">BPF_JLE</span>   <span class="hljs-number">0</span>xb<span class="hljs-number">0</span>  /* eBPF only: unsigned &#x27;&lt;=&#x27; */
 <span class="hljs-attribute">BPF_JSLT</span>  <span class="hljs-number">0</span>xc<span class="hljs-number">0</span>  /* eBPF only: signed &#x27;&lt;&#x27; */
-<span class="hljs-attribute">BPF_JSLE</span>  <span class="hljs-number">0</span>xd<span class="hljs-number">0</span>  /* eBPF only: signed &#x27;&lt;=&#x27; */</code></pre></div>
-
-<ul>
-<li><code>BPF_XOR | BPF_K | BPF_ALU </code>在cBPF中表示<code>A^=imm32</code>，在eBPF中表示<code>src_reg = (u32) src_reg ^ (u32) imm32</code>（这段看代码，应该是<code>dst_reg = (u32) dst_reg ^ (u32) imm32</code>?） BPF_JMP | BPF_EXIT表示直接退出。</li>
-</ul>
-<h3 id="对于load和store指令"><a href="#对于load和store指令" class="headerlink" title="对于load和store指令"></a>对于load和store指令</h3><div class="hljs"><pre><code class="hljs asciidoc"><span class="hljs-code">+--------+</span>--------<span class="hljs-code">+-------------------+</span>
+<span class="hljs-attribute">BPF_JSLE</span>  <span class="hljs-number">0</span>xd<span class="hljs-number">0</span>  /* eBPF only: signed &#x27;&lt;=&#x27; */</code></pre></div><ul><li><code>BPF_XOR | BPF_K | BPF_ALU</code> 在cBPF中表示<code>A^=imm32</code>，在eBPF中表示<code>src_reg = (u32) src_reg ^ (u32) imm32</code>（这段看代码，应该是<code>dst_reg = (u32) dst_reg ^ (u32) imm32</code>?） BPF_JMP | BPF_EXIT表示直接退出。</li></ul><h3 id="对于load和store指令"><a href="#对于load和store指令" class="headerlink" title="对于load和store指令"></a>对于load和store指令</h3><div class="hljs"><pre><code class="hljs asciidoc"><span class="hljs-code">+--------+</span>--------<span class="hljs-code">+-------------------+</span>
 | 3 bits | 2 bits |   3 bits          |
 |  mode  |  size  | instruction class |
 <span class="hljs-code">+--------+</span>--------<span class="hljs-code">+-------------------+</span>
-(MSB)                             (LSB)</code></pre></div>
-
-<p>size部分</p>
-<div class="hljs"><pre><code class="hljs mipsasm"> <span class="hljs-keyword">BPF_W </span>  <span class="hljs-number">0x00</span>    <span class="hljs-comment">/* word */</span>
+(MSB)                             (LSB)</code></pre></div><p>size部分</p><div class="hljs"><pre><code class="hljs mipsasm"> <span class="hljs-keyword">BPF_W </span>  <span class="hljs-number">0x00</span>    <span class="hljs-comment">/* word */</span>
  <span class="hljs-keyword">BPF_H </span>  <span class="hljs-number">0x08</span>    <span class="hljs-comment">/* half word */</span>
  <span class="hljs-keyword">BPF_B </span>  <span class="hljs-number">0x10</span>    <span class="hljs-comment">/* byte */</span>
  <span class="hljs-keyword">BPF_DW </span> <span class="hljs-number">0x18</span>    <span class="hljs-comment">/* eBPF only, double word */</span>
@@ -676,38 +327,20 @@ retq</code></pre></div>
 <span class="hljs-keyword">B </span> - <span class="hljs-number">1</span> <span class="hljs-keyword">byte</span>
 <span class="hljs-keyword">H </span> - <span class="hljs-number">2</span> <span class="hljs-keyword">byte</span>
 <span class="hljs-keyword">W </span> - <span class="hljs-number">4</span> <span class="hljs-keyword">byte</span>
-<span class="hljs-keyword">DW </span>- <span class="hljs-number">8</span> <span class="hljs-keyword">byte </span>(eBPF only)</code></pre></div>
-
-<p>mode部分</p>
-<div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">BPF_IMM</span>  <span class="hljs-number">0</span>x<span class="hljs-number">00</span>  /* used for <span class="hljs-number">32</span>-bit mov in classic BPF and <span class="hljs-number">64</span>-bit in eBPF */
+<span class="hljs-keyword">DW </span>- <span class="hljs-number">8</span> <span class="hljs-keyword">byte </span>(eBPF only)</code></pre></div><p>mode部分</p><div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">BPF_IMM</span>  <span class="hljs-number">0</span>x<span class="hljs-number">00</span>  /* used for <span class="hljs-number">32</span>-bit mov in classic BPF and <span class="hljs-number">64</span>-bit in eBPF */
 <span class="hljs-attribute">BPF_ABS</span>  <span class="hljs-number">0</span>x<span class="hljs-number">20</span>
 <span class="hljs-attribute">BPF_IND</span>  <span class="hljs-number">0</span>x<span class="hljs-number">40</span>
 <span class="hljs-attribute">BPF_MEM</span>  <span class="hljs-number">0</span>x<span class="hljs-number">60</span>
 <span class="hljs-attribute">BPF_LEN</span>  <span class="hljs-number">0</span>x<span class="hljs-number">80</span>  /* classic BPF only, reserved in eBPF */
 <span class="hljs-attribute">BPF_MSH</span>  <span class="hljs-number">0</span>xa<span class="hljs-number">0</span>  /* classic BPF only, reserved in eBPF */
-<span class="hljs-attribute">BPF_XADD</span> <span class="hljs-number">0</span>xc<span class="hljs-number">0</span>  /* eBPF only, exclusive add */</code></pre></div>
-
-<p>两个非通用指令<code>BPF_ABS | &lt;size&gt; | BPF_LD</code>和<code>BPF_IND | &lt;size&gt; | BPF_LD</code>，用于访问数据包中的字段。使用条件：</p>
-<p>1）ctx是指向<code>sk_buff</code>的指针</p>
-<p>2）R0-R6规定为：R0保存获取的结果，R6保存<code>sk_buff</code>指针，R1-R5为暂存器，不可存储需要跨指令的数据（即执行完指令后R1-R5中的数据不可用）</p>
-<p>3）访问超出<code>sk_buff-&gt;data</code>范围 ，自动跳出</p>
-<div class="hljs"><pre><code class="hljs armasm"><span class="hljs-symbol">BPF_IND</span> <span class="hljs-title">| BPF_W |</span> BPF_LD means:
+<span class="hljs-attribute">BPF_XADD</span> <span class="hljs-number">0</span>xc<span class="hljs-number">0</span>  /* eBPF only, exclusive add */</code></pre></div><p>两个非通用指令<code>BPF_ABS | &lt;size&gt; | BPF_LD</code>和<code>BPF_IND | &lt;size&gt; | BPF_LD</code>，用于访问数据包中的字段。使用条件：</p><p>1）ctx是指向<code>sk_buff</code>的指针</p><p>2）R0-R6规定为：R0保存获取的结果，R6保存<code>sk_buff</code>指针，R1-R5为暂存器，不可存储需要跨指令的数据（即执行完指令后R1-R5中的数据不可用）</p><p>3）访问超出<code>sk_buff-&gt;data</code>范围 ，自动跳出</p><div class="hljs"><pre><code class="hljs armasm"><span class="hljs-symbol">BPF_IND</span> <span class="hljs-title">| BPF_W |</span> BPF_LD means:
 
   <span class="hljs-built_in">R0</span> = ntohl(*(u32 *) (((struct sk_buff *) <span class="hljs-built_in">R6</span>)-&gt;<span class="hljs-meta">data</span> + src_reg + imm32))
-  <span class="hljs-keyword">and</span> <span class="hljs-built_in">R1</span> - <span class="hljs-built_in">R5</span> were scratched.</code></pre></div>
-
-<p>其他的一些例子</p>
-<div class="hljs"><pre><code class="hljs gcode">BPF_MEM | &lt;size&gt; | BPF_STX:  *<span class="hljs-comment">(size *)</span> <span class="hljs-comment">(dst_reg + off)</span> = src_reg
+  <span class="hljs-keyword">and</span> <span class="hljs-built_in">R1</span> - <span class="hljs-built_in">R5</span> were scratched.</code></pre></div><p>其他的一些例子</p><div class="hljs"><pre><code class="hljs gcode">BPF_MEM | &lt;size&gt; | BPF_STX:  *<span class="hljs-comment">(size *)</span> <span class="hljs-comment">(dst_reg + off)</span> = src_reg
 BPF_MEM | &lt;size&gt; | BPF_ST:   *<span class="hljs-comment">(size *)</span> <span class="hljs-comment">(dst_reg + off)</span> = im<span class="hljs-name">m32</span>
 BPF_MEM | &lt;size&gt; | BPF_LDX:  dst_reg = *<span class="hljs-comment">(size *)</span> <span class="hljs-comment">(src_reg + off)</span>
 BPF_XADD | BPF_W  | BPF_STX: lock xadd *<span class="hljs-comment">(u32 *)</span><span class="hljs-comment">(dst_reg + off16)</span> += src_reg
-BPF_XADD | BPF_DW | BPF_STX: lock xadd *<span class="hljs-comment">(u64 *)</span><span class="hljs-comment">(dst_reg + off16)</span> += src_reg</code></pre></div>
-
-<blockquote>
-<p>注：在<a target="_blank" rel="noopener" href="https://elixir.bootlin.com/linux/v5.8.7/source/include/linux/filter.h#L265">linux/filter.h</a>下都有。ST是从dst到src，LD是从src到dst</p>
-</blockquote>
-<p>BPF_LD | BPF_DW | BPF_IMM（获取一个8字节的立即数）会跨两个指令。</p>
-<div class="hljs"><pre><code class="hljs livescript"><span class="hljs-comment">#define BPF_LD_IMM64_RAW(DST, SRC, IMM)				\</span>
+BPF_XADD | BPF_DW | BPF_STX: lock xadd *<span class="hljs-comment">(u64 *)</span><span class="hljs-comment">(dst_reg + off16)</span> += src_reg</code></pre></div><blockquote><p>注：在<a target="_blank" rel="noopener" href="https://elixir.bootlin.com/linux/v5.8.7/source/include/linux/filter.h#L265">linux/filter.h</a>下都有。ST是从dst到src，LD是从src到dst</p></blockquote><p>BPF_LD | BPF_DW | BPF_IMM（获取一个8字节的立即数）会跨两个指令。</p><div class="hljs"><pre><code class="hljs livescript"><span class="hljs-comment">#define BPF_LD_IMM64_RAW(DST, SRC, IMM)				\</span>
 	((struct bpf_insn) &#123;					<span class="hljs-string">\</span>
 		.code  = BPF_LD | BPF_DW | BPF_IMM,		<span class="hljs-string">\</span>
 		.dst_reg = DST,					<span class="hljs-string">\</span>
@@ -719,25 +352,7 @@ BPF_XADD | BPF_DW | BPF_STX: lock xadd *<span class="hljs-comment">(u64 *)</span
 		.dst_reg = <span class="hljs-number">0</span>,					<span class="hljs-string">\</span>
 		.src_reg = <span class="hljs-number">0</span>,					<span class="hljs-string">\</span>
 		.<span class="hljs-literal">off</span>   = <span class="hljs-number">0</span>,					<span class="hljs-string">\</span>
-		.imm   = ((__u64) (IMM)) &gt;&gt; <span class="hljs-number">32</span> &#125;)</code></pre></div>
-
-
-
-<h2 id="eBPF验证器"><a href="#eBPF验证器" class="headerlink" title="eBPF验证器"></a>eBPF验证器</h2><p>两步：</p>
-<p>1）做DAG（有向无环图）检测，确保无循环以及CFG（控制流保护）</p>
-<p>2）从第一条指令开始，模拟执行所有可能的指令路径，观察寄存器和堆栈状态</p>
-<p>一些检测规则：</p>
-<p>1）不允许指针相加</p>
-<p>2）不允许读未初始化的寄存器</p>
-<p>3）辅助函数调用后R1-R5为不可读状态</p>
-<p>4）load/store指令需要相应的寄存器类型为<code>PTR_TO_CTX</code>、 <code>PTR_TO_MAP</code>、<code>PTR_TO_STACK</code>是才有效 （比如不能是标量），并且会有边界和对齐检测</p>
-<p>5）程序开始时，R1类型为<code>PTR_TO_CTX</code>（ctx指针）。可以通过<code>is_valid_access()</code>回调函数，自定义验证方式，来进行边界与对齐检测。另外类型为<code>PTR_TO_STACK</code>（堆栈指针）时，访问边界为[-MAX_BPF_STACK, 0)</p>
-<p>6）堆栈只有在写入才能读取（对应<code>PTR_TO_STACK</code>类型寄存器的操作）</p>
-<p>7）<code>bpf_verifier_ops-&gt;get_func_proto()</code>可以用来自定义“函数调用”时的“参数检测”（检测寄存器），返回值保存在R0</p>
-<p>8）eBPF对seccomp与socket filter的验证方式是相同的，而cBPF对于seccomp，需要先进行<code>seccomp verifier</code>，在进行其他的验证。</p>
-<p>详细代码<code>kernel/bpf/verifier.c</code></p>
-<h2 id="寄存器值追踪"><a href="#寄存器值追踪" class="headerlink" title="寄存器值追踪"></a>寄存器值追踪</h2><p>验证器追踪寄存器中的值，检测值可能的范围。追踪由<code>include/linux/bpf_verifier.h</code>下的<code>struct bpf_reg_state</code>完成，寄存器值可能的类型：<code>NOT_INIT</code>、<code>SCALAR_VALUE</code>、<code>point</code>。<code>point</code>由分为：</p>
-<div class="hljs"><pre><code class="hljs livecodeserver">PTR_TO_CTX          Pointer <span class="hljs-built_in">to</span> bpf_context.
+		.imm   = ((__u64) (IMM)) &gt;&gt; <span class="hljs-number">32</span> &#125;)</code></pre></div><h2 id="eBPF验证器"><a href="#eBPF验证器" class="headerlink" title="eBPF验证器"></a>eBPF验证器</h2><p>两步：</p><p>1）做DAG（有向无环图）检测，确保无循环以及CFG（控制流保护）</p><p>2）从第一条指令开始，模拟执行所有可能的指令路径，观察寄存器和堆栈状态</p><p>一些检测规则：</p><p>1）不允许指针相加</p><p>2）不允许读未初始化的寄存器</p><p>3）辅助函数调用后R1-R5为不可读状态</p><p>4）load/store指令需要相应的寄存器类型为<code>PTR_TO_CTX</code>、 <code>PTR_TO_MAP</code>、<code>PTR_TO_STACK</code>是才有效 （比如不能是标量），并且会有边界和对齐检测</p><p>5）程序开始时，R1类型为<code>PTR_TO_CTX</code>（ctx指针）。可以通过<code>is_valid_access()</code>回调函数，自定义验证方式，来进行边界与对齐检测。另外类型为<code>PTR_TO_STACK</code>（堆栈指针）时，访问边界为[-MAX_BPF_STACK, 0)</p><p>6）堆栈只有在写入才能读取（对应<code>PTR_TO_STACK</code>类型寄存器的操作）</p><p>7）<code>bpf_verifier_ops-&gt;get_func_proto()</code>可以用来自定义“函数调用”时的“参数检测”（检测寄存器），返回值保存在R0</p><p>8）eBPF对seccomp与socket filter的验证方式是相同的，而cBPF对于seccomp，需要先进行<code>seccomp verifier</code>，在进行其他的验证。</p><p>详细代码<code>kernel/bpf/verifier.c</code></p><h2 id="寄存器值追踪"><a href="#寄存器值追踪" class="headerlink" title="寄存器值追踪"></a>寄存器值追踪</h2><p>验证器追踪寄存器中的值，检测值可能的范围。追踪由<code>include/linux/bpf_verifier.h</code>下的<code>struct bpf_reg_state</code>完成，寄存器值可能的类型：<code>NOT_INIT</code>、<code>SCALAR_VALUE</code>、<code>point</code>。<code>point</code>由分为：</p><div class="hljs"><pre><code class="hljs livecodeserver">PTR_TO_CTX          Pointer <span class="hljs-built_in">to</span> bpf_context.
  CONST_PTR_TO_MAP    Pointer <span class="hljs-built_in">to</span> struct bpf_map.  <span class="hljs-string">&quot;Const&quot;</span> because arithmetic
                      <span class="hljs-keyword">on</span> <span class="hljs-title">these</span> <span class="hljs-title">pointers</span> <span class="hljs-title">is</span> <span class="hljs-title">forbidden</span>.
  PTR_TO_MAP_VALUE    Pointer <span class="hljs-built_in">to</span> <span class="hljs-keyword">the</span> <span class="hljs-built_in">value</span> stored <span class="hljs-keyword">in</span> <span class="hljs-keyword">a</span> map <span class="hljs-keyword">element</span>.
@@ -756,37 +371,15 @@ BPF_XADD | BPF_DW | BPF_STX: lock xadd *<span class="hljs-comment">(u64 *)</span
                      checked != <span class="hljs-literal">NULL</span>. PTR_TO_SOCKET is reference-counted,
                      so programs must release <span class="hljs-keyword">the</span> reference through <span class="hljs-keyword">the</span>
                      <span class="hljs-built_in">socket</span> release <span class="hljs-function"><span class="hljs-keyword">function</span> <span class="hljs-title">before</span> <span class="hljs-title">the</span> <span class="hljs-title">end</span> <span class="hljs-title">of</span> <span class="hljs-title">the</span> <span class="hljs-title">program</span>.</span>
-                     Arithmetic <span class="hljs-keyword">on</span> <span class="hljs-title">these</span> <span class="hljs-title">pointers</span> <span class="hljs-title">is</span> <span class="hljs-title">forbidden</span>.</code></pre></div>
-
-<blockquote>
-<p>对于PTR_TO_SOCKET和PTR_TO_SOCKET_OR_NULL，在程序结束前需要使用socket release方法，释放引用</p>
-</blockquote>
-<p>对于指针偏移的验证：</p>
-<p>1）分<code>fixed offset</code>和<code>variable offset</code></p>
-<p>2）验证器对<code>vaiable offset</code>需要记录的状态：</p>
-<div class="hljs"><pre><code class="hljs angelscript">* minimum <span class="hljs-keyword">and</span> maximum values as unsigned
+                     Arithmetic <span class="hljs-keyword">on</span> <span class="hljs-title">these</span> <span class="hljs-title">pointers</span> <span class="hljs-title">is</span> <span class="hljs-title">forbidden</span>.</code></pre></div><blockquote><p>对于PTR_TO_SOCKET和PTR_TO_SOCKET_OR_NULL，在程序结束前需要使用socket release方法，释放引用</p></blockquote><p>对于指针偏移的验证：</p><p>1）分<code>fixed offset</code>和<code>variable offset</code></p><p>2）验证器对<code>vaiable offset</code>需要记录的状态：</p><div class="hljs"><pre><code class="hljs angelscript">* minimum <span class="hljs-keyword">and</span> maximum values as unsigned
 * minimum <span class="hljs-keyword">and</span> maximum values as signed
-* 一个<span class="hljs-string">&#x27;tnum&#x27;</span>值，由两个u64组成，第一个为value，是具体的值；第二个为mask，用<span class="hljs-number">1</span>标记未知的位。比如知道寄存器前<span class="hljs-number">56</span>位为<span class="hljs-number">0</span>，后<span class="hljs-number">8</span>位不知道，则表示为tnum(<span class="hljs-number">0x0</span>,<span class="hljs-number">0xff</span>)，表示省略了高位的<span class="hljs-number">0</span></code></pre></div>
-
-<ul>
-<li>状态可以通过逻辑运算更新，例如上的<code>tnum(0x0,0xff)</code>寄存器与<code>0x40</code>取或，则变为<code>tnum(0x40,0xbf)</code></li>
-<li>状态可以根据条件分支判断，例如在<code>SCALAR_VALUE</code>(offset)大于8为true的分支，寄存器的<code>umin_value</code>为9</li>
-<li>对<code>PTR_TO_PACKET</code>类型的寄存器，使用id标识某个偏移量。例如寄存器A拷贝到寄存器B，两者有相同偏移量，因此offset id相同，一次验证即可。</li>
-<li><code>PTR_TO_MAP_VALUE_OR_NULL</code>类寄存器（存储bgp  map中查询返回的指针），也使用id标识，一旦验证某个id标识非NULL，其他副本也相同。除此外，可以做对齐验证。</li>
-<li><code>PTR_TO_SOCKET</code>和<code>PTR_TO_SOCKET_OR_NULL</code>类寄存器（存储socket中查询返回的指针）也使用id标识，与<code>PTR_TO_MAP_VALUE_OR_NULL</code>类似。另外，对非NULL的id，可将其副本调用socket release方法。</li>
-</ul>
-<h2 id="数据包的直接访问"><a href="#数据包的直接访问" class="headerlink" title="数据包的直接访问"></a>数据包的直接访问</h2><p>对于<code>cls_bpf</code>与<code>act_bpf</code>，允许通过<code>skb-&gt;date</code>和<code>skb-&gt;data_end</code>直接访问数据包。</p>
-<div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">1</span>:  r<span class="hljs-number">4</span> = *(u<span class="hljs-number">32</span> *)(r<span class="hljs-number">1</span> +<span class="hljs-number">80</span>)  /* load skb-&gt;data_end */
+* 一个<span class="hljs-string">&#x27;tnum&#x27;</span>值，由两个u64组成，第一个为value，是具体的值；第二个为mask，用<span class="hljs-number">1</span>标记未知的位。比如知道寄存器前<span class="hljs-number">56</span>位为<span class="hljs-number">0</span>，后<span class="hljs-number">8</span>位不知道，则表示为tnum(<span class="hljs-number">0x0</span>,<span class="hljs-number">0xff</span>)，表示省略了高位的<span class="hljs-number">0</span></code></pre></div><ul><li>状态可以通过逻辑运算更新，例如上的<code>tnum(0x0,0xff)</code>寄存器与<code>0x40</code>取或，则变为<code>tnum(0x40,0xbf)</code></li><li>状态可以根据条件分支判断，例如在<code>SCALAR_VALUE</code>(offset)大于8为true的分支，寄存器的<code>umin_value</code>为9</li><li>对<code>PTR_TO_PACKET</code>类型的寄存器，使用id标识某个偏移量。例如寄存器A拷贝到寄存器B，两者有相同偏移量，因此offset id相同，一次验证即可。</li><li><code>PTR_TO_MAP_VALUE_OR_NULL</code>类寄存器（存储bgp map中查询返回的指针），也使用id标识，一旦验证某个id标识非NULL，其他副本也相同。除此外，可以做对齐验证。</li><li><code>PTR_TO_SOCKET</code>和<code>PTR_TO_SOCKET_OR_NULL</code>类寄存器（存储socket中查询返回的指针）也使用id标识，与<code>PTR_TO_MAP_VALUE_OR_NULL</code>类似。另外，对非NULL的id，可将其副本调用socket release方法。</li></ul><h2 id="数据包的直接访问"><a href="#数据包的直接访问" class="headerlink" title="数据包的直接访问"></a>数据包的直接访问</h2><p>对于<code>cls_bpf</code>与<code>act_bpf</code>，允许通过<code>skb-&gt;date</code>和<code>skb-&gt;data_end</code>直接访问数据包。</p><div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">1</span>:  r<span class="hljs-number">4</span> = *(u<span class="hljs-number">32</span> *)(r<span class="hljs-number">1</span> +<span class="hljs-number">80</span>)  /* load skb-&gt;data_end */
 <span class="hljs-attribute">2</span>:  r<span class="hljs-number">3</span> = *(u<span class="hljs-number">32</span> *)(r<span class="hljs-number">1</span> +<span class="hljs-number">76</span>)  /* load skb-&gt;data */
 <span class="hljs-attribute">3</span>:  r<span class="hljs-number">5</span> = r<span class="hljs-number">3</span>
 <span class="hljs-attribute">4</span>:  r<span class="hljs-number">5</span> += <span class="hljs-number">14</span>
 <span class="hljs-attribute">5</span>:  if r<span class="hljs-number">5</span> &gt; r<span class="hljs-number">4</span> goto pc+<span class="hljs-number">16</span>
 <span class="hljs-attribute">R1</span>=ctx R<span class="hljs-number">3</span>=pkt(id=<span class="hljs-number">0</span>,<span class="hljs-literal">off</span>=<span class="hljs-number">0</span>,r=<span class="hljs-number">14</span>) R<span class="hljs-number">4</span>=pkt_end R<span class="hljs-number">5</span>=pkt(id=<span class="hljs-number">0</span>,<span class="hljs-literal">off</span>=<span class="hljs-number">14</span>,r=<span class="hljs-number">14</span>) R<span class="hljs-number">10</span>=fp
-<span class="hljs-attribute">6</span>:  r<span class="hljs-number">0</span> = *(u<span class="hljs-number">16</span> *)(r<span class="hljs-number">3</span> +<span class="hljs-number">12</span>) /* access <span class="hljs-number">12</span> and <span class="hljs-number">13</span> bytes of the packet */</code></pre></div>
-
-<p>根据第5行的判断，验证器可以标记R3为<code>pkg(id=0,off=0,r=14)</code>，其中id=0表示未向寄存器添加<code>variablle offset</code>，off=0表示未向寄存器添加<code>fixed  offset</code>，r=14表示安全访问范围为[R3,R3+14]。同理R5标记为<code>pkt(id=0,off=14,r=14)</code></p>
-<h2 id="eBPF-maps"><a href="#eBPF-maps" class="headerlink" title="eBPF maps"></a>eBPF maps</h2><p><code>map</code>用于内核和用户空间之间共享不同类型的数据。<code>map</code>存储使用BPF系统调用：</p>
-<div class="hljs"><pre><code class="hljs sql">- <span class="hljs-keyword">create</span> a <span class="hljs-keyword">map</span> <span class="hljs-keyword">with</span> given <span class="hljs-keyword">type</span> <span class="hljs-keyword">and</span> <span class="hljs-keyword">attributes</span>
+<span class="hljs-attribute">6</span>:  r<span class="hljs-number">0</span> = *(u<span class="hljs-number">16</span> *)(r<span class="hljs-number">3</span> +<span class="hljs-number">12</span>) /* access <span class="hljs-number">12</span> and <span class="hljs-number">13</span> bytes of the packet */</code></pre></div><p>根据第5行的判断，验证器可以标记R3为<code>pkg(id=0,off=0,r=14)</code>，其中id=0表示未向寄存器添加<code>variablle offset</code>，off=0表示未向寄存器添加<code>fixed offset</code>，r=14表示安全访问范围为[R3,R3+14]。同理R5标记为<code>pkt(id=0,off=14,r=14)</code></p><h2 id="eBPF-maps"><a href="#eBPF-maps" class="headerlink" title="eBPF maps"></a>eBPF maps</h2><p><code>map</code>用于内核和用户空间之间共享不同类型的数据。<code>map</code>存储使用BPF系统调用：</p><div class="hljs"><pre><code class="hljs sql">- <span class="hljs-keyword">create</span> a <span class="hljs-keyword">map</span> <span class="hljs-keyword">with</span> given <span class="hljs-keyword">type</span> <span class="hljs-keyword">and</span> <span class="hljs-keyword">attributes</span>
   map_fd = bpf(BPF_MAP_CREATE, <span class="hljs-keyword">union</span> bpf_attr *<span class="hljs-keyword">attr</span>, u32 <span class="hljs-keyword">size</span>)
   <span class="hljs-keyword">using</span> <span class="hljs-keyword">attr</span>-&gt;map_type, <span class="hljs-keyword">attr</span>-&gt;key_size, <span class="hljs-keyword">attr</span>-&gt;value_size, <span class="hljs-keyword">attr</span>-&gt;max_entries
   <span class="hljs-keyword">returns</span> process-<span class="hljs-keyword">local</span> <span class="hljs-keyword">file</span> <span class="hljs-keyword">descriptor</span> <span class="hljs-keyword">or</span> negative <span class="hljs-keyword">error</span>
@@ -806,47 +399,28 @@ BPF_XADD | BPF_DW | BPF_STX: lock xadd *<span class="hljs-comment">(u64 *)</span
   <span class="hljs-keyword">using</span> <span class="hljs-keyword">attr</span>-&gt;map_fd, <span class="hljs-keyword">attr</span>-&gt;<span class="hljs-keyword">key</span>
 
 - <span class="hljs-keyword">to</span> <span class="hljs-keyword">delete</span> <span class="hljs-keyword">map</span>: <span class="hljs-keyword">close</span>(fd)
-  Exiting process will <span class="hljs-keyword">delete</span> maps automatically</code></pre></div>
-
-<p><code>map</code>类型：hash、array、bloom  filter、redix-tree等；<code>map</code>定义：</p>
-<div class="hljs"><pre><code class="hljs routeros">. type
+  Exiting process will <span class="hljs-keyword">delete</span> maps automatically</code></pre></div><p><code>map</code>类型：hash、array、bloom filter、redix-tree等；<code>map</code>定义：</p><div class="hljs"><pre><code class="hljs routeros">. type
 . max number of elements
 . key size <span class="hljs-keyword">in</span> bytes
-. value size <span class="hljs-keyword">in</span> bytes</code></pre></div>
-
-<h2 id="修剪（pruning）"><a href="#修剪（pruning）" class="headerlink" title="修剪（pruning）"></a>修剪（pruning）</h2><p>验证器（verifier）在对新分支进行分析时，会比较当前指令之前检测过的状态，如果当前（寄存器）状态属于之前检测过的状态，这个分支就被认为可信，被修剪。</p>
-<h2 id="理解验证器的日志"><a href="#理解验证器的日志" class="headerlink" title="理解验证器的日志"></a>理解验证器的日志</h2><ul>
-<li><p>不可达指令</p>
-<div class="hljs"><pre><code class="hljs mipsasm">static struct <span class="hljs-keyword">bpf_insn </span>prog[] = &#123;
+. value size <span class="hljs-keyword">in</span> bytes</code></pre></div><h2 id="修剪（pruning）"><a href="#修剪（pruning）" class="headerlink" title="修剪（pruning）"></a>修剪（pruning）</h2><p>验证器（verifier）在对新分支进行分析时，会比较当前指令之前检测过的状态，如果当前（寄存器）状态属于之前检测过的状态，这个分支就被认为可信，被修剪。</p><h2 id="理解验证器的日志"><a href="#理解验证器的日志" class="headerlink" title="理解验证器的日志"></a>理解验证器的日志</h2><ul><li><p>不可达指令</p><div class="hljs"><pre><code class="hljs mipsasm">static struct <span class="hljs-keyword">bpf_insn </span>prog[] = &#123;
    <span class="hljs-keyword">BPF_EXIT_INSN(),</span>
 <span class="hljs-keyword"> </span>  <span class="hljs-keyword">BPF_EXIT_INSN(),</span>
 <span class="hljs-keyword"> </span>&#125;;
 <span class="hljs-symbol"> Error:</span>
-   unreachable <span class="hljs-keyword">insn </span><span class="hljs-number">1</span></code></pre></div>
-</li>
-<li><p>读取未初始化的寄存器</p>
-<div class="hljs"><pre><code class="hljs subunit">  BPF_MOV64_REG(BPF_REG_0, BPF_REG_2),
+   unreachable <span class="hljs-keyword">insn </span><span class="hljs-number">1</span></code></pre></div></li><li><p>读取未初始化的寄存器</p><div class="hljs"><pre><code class="hljs subunit">  BPF_MOV64_REG(BPF_REG_0, BPF_REG_2),
   BPF_EXIT_INSN(),
 Error:
   0: (bf) r0 = r2
-  R2 !read_ok</code></pre></div>
-</li>
-<li><p>结束程序前未初始化寄存器</p>
-<div class="hljs"><pre><code class="hljs awk">  BPF_MOV64_REG(BPF_REG_2, BPF_REG_1),
+  R2 !read_ok</code></pre></div></li><li><p>结束程序前未初始化寄存器</p><div class="hljs"><pre><code class="hljs awk">  BPF_MOV64_REG(BPF_REG_2, BPF_REG_1),
   BPF_EXIT_INSN(),
 Error:
   <span class="hljs-number">0</span>: (bf) r2 = r1
   <span class="hljs-number">1</span>: (<span class="hljs-number">95</span>) <span class="hljs-keyword">exit</span>
-  R0 !read_ok</code></pre></div></li>
-<li><p>越界访问堆栈</p>
-<div class="hljs"><pre><code class="hljs apache">  <span class="hljs-attribute">BPF_ST_MEM</span>(BPF_DW, BPF_REG_<span class="hljs-number">10</span>, <span class="hljs-number">8</span>, <span class="hljs-number">0</span>),
+  R0 !read_ok</code></pre></div></li><li><p>越界访问堆栈</p><div class="hljs"><pre><code class="hljs apache">  <span class="hljs-attribute">BPF_ST_MEM</span>(BPF_DW, BPF_REG_<span class="hljs-number">10</span>, <span class="hljs-number">8</span>, <span class="hljs-number">0</span>),
   <span class="hljs-attribute">BPF_EXIT_INSN</span>(),
 <span class="hljs-attribute">Error</span>:
   <span class="hljs-attribute">0</span>: (<span class="hljs-number">7</span>a) *(u<span class="hljs-number">64</span> *)(r<span class="hljs-number">10</span> +<span class="hljs-number">8</span>) = <span class="hljs-number">0</span>
-  <span class="hljs-attribute">invalid</span> stack <span class="hljs-literal">off</span>=<span class="hljs-number">8</span> size=<span class="hljs-number">8</span></code></pre></div>
-</li>
-<li><p>未初始化堆栈（<code>map_lookup_elem</code>调用，R1为文件描述符，R2为key，读取了R2指向的未初始化堆栈）</p>
-<div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">BPF_MOV64_REG</span>(BPF_REG_<span class="hljs-number">2</span>, BPF_REG_<span class="hljs-number">10</span>),
+  <span class="hljs-attribute">invalid</span> stack <span class="hljs-literal">off</span>=<span class="hljs-number">8</span> size=<span class="hljs-number">8</span></code></pre></div></li><li><p>未初始化堆栈（<code>map_lookup_elem</code>调用，R1为文件描述符，R2为key，读取了R2指向的未初始化堆栈）</p><div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">BPF_MOV64_REG</span>(BPF_REG_<span class="hljs-number">2</span>, BPF_REG_<span class="hljs-number">10</span>),
 <span class="hljs-attribute">BPF_ALU64_IMM</span>(BPF_ADD, BPF_REG_<span class="hljs-number">2</span>, -<span class="hljs-number">8</span>),
 <span class="hljs-attribute">BPF_LD_MAP_FD</span>(BPF_REG_<span class="hljs-number">1</span>, <span class="hljs-number">0</span>),
 <span class="hljs-attribute">BPF_RAW_INSN</span>(BPF_JMP | BPF_CALL, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, <span class="hljs-number">0</span>, BPF_FUNC_map_lookup_elem),
@@ -856,10 +430,7 @@ Error:
 <span class="hljs-attribute">1</span>: (<span class="hljs-number">07</span>) r<span class="hljs-number">2</span> += -<span class="hljs-number">8</span>
 <span class="hljs-attribute">2</span>: (b<span class="hljs-number">7</span>) r<span class="hljs-number">1</span> = <span class="hljs-number">0</span>x<span class="hljs-number">0</span>
 <span class="hljs-attribute">3</span>: (<span class="hljs-number">85</span>) call <span class="hljs-number">1</span>
-<span class="hljs-attribute">invalid</span> indirect read from stack <span class="hljs-literal">off</span> -<span class="hljs-number">8</span>+<span class="hljs-number">0</span> size <span class="hljs-number">8</span></code></pre></div>
-</li>
-<li><p>无效的<code>map_fd</code>（R1中的0x0）</p>
-<div class="hljs"><pre><code class="hljs apache"> <span class="hljs-attribute">BPF_ST_MEM</span>(BPF_DW, BPF_REG_<span class="hljs-number">10</span>, -<span class="hljs-number">8</span>, <span class="hljs-number">0</span>),
+<span class="hljs-attribute">invalid</span> indirect read from stack <span class="hljs-literal">off</span> -<span class="hljs-number">8</span>+<span class="hljs-number">0</span> size <span class="hljs-number">8</span></code></pre></div></li><li><p>无效的<code>map_fd</code>（R1中的0x0）</p><div class="hljs"><pre><code class="hljs apache"> <span class="hljs-attribute">BPF_ST_MEM</span>(BPF_DW, BPF_REG_<span class="hljs-number">10</span>, -<span class="hljs-number">8</span>, <span class="hljs-number">0</span>),
   <span class="hljs-attribute">BPF_MOV64_REG</span>(BPF_REG_<span class="hljs-number">2</span>, BPF_REG_<span class="hljs-number">10</span>),
   <span class="hljs-attribute">BPF_ALU64_IMM</span>(BPF_ADD, BPF_REG_<span class="hljs-number">2</span>, -<span class="hljs-number">8</span>),
   <span class="hljs-attribute">BPF_LD_MAP_FD</span>(BPF_REG_<span class="hljs-number">1</span>, <span class="hljs-number">0</span>),
@@ -871,10 +442,7 @@ Error:
   <span class="hljs-attribute">2</span>: (<span class="hljs-number">07</span>) r<span class="hljs-number">2</span> += -<span class="hljs-number">8</span>
   <span class="hljs-attribute">3</span>: (b<span class="hljs-number">7</span>) r<span class="hljs-number">1</span> = <span class="hljs-number">0</span>x<span class="hljs-number">0</span>
   <span class="hljs-attribute">4</span>: (<span class="hljs-number">85</span>) call <span class="hljs-number">1</span>
-  <span class="hljs-attribute">fd</span> <span class="hljs-number">0</span> is not pointing to valid bpf_map</code></pre></div>
-</li>
-<li><p><code>map_lookup_elem</code>的返回值未进行验证（保存在R0）</p>
-<div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">map</span> element:
+  <span class="hljs-attribute">fd</span> <span class="hljs-number">0</span> is not pointing to valid bpf_map</code></pre></div></li><li><p><code>map_lookup_elem</code>的返回值未进行验证（保存在R0）</p><div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">map</span> element:
   <span class="hljs-attribute">BPF_ST_MEM</span>(BPF_DW, BPF_REG_<span class="hljs-number">10</span>, -<span class="hljs-number">8</span>, <span class="hljs-number">0</span>),
   <span class="hljs-attribute">BPF_MOV64_REG</span>(BPF_REG_<span class="hljs-number">2</span>, BPF_REG_<span class="hljs-number">10</span>),
   <span class="hljs-attribute">BPF_ALU64_IMM</span>(BPF_ADD, BPF_REG_<span class="hljs-number">2</span>, -<span class="hljs-number">8</span>),
@@ -889,10 +457,7 @@ Error:
   <span class="hljs-attribute">3</span>: (b<span class="hljs-number">7</span>) r<span class="hljs-number">1</span> = <span class="hljs-number">0</span>x<span class="hljs-number">0</span>
   <span class="hljs-attribute">4</span>: (<span class="hljs-number">85</span>) call <span class="hljs-number">1</span>
   <span class="hljs-attribute">5</span>: (<span class="hljs-number">7</span>a) *(u<span class="hljs-number">64</span> *)(r<span class="hljs-number">0</span> +<span class="hljs-number">0</span>) = <span class="hljs-number">0</span>
-  <span class="hljs-attribute">R0</span> invalid mem access &#x27;map_value_or_null&#x27;</code></pre></div>
-</li>
-<li><p><code>BPF_ST_MEM</code>以错误的对齐方式进行访问</p>
-<div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">BPF_ST_MEM</span>(BPF_DW, BPF_REG_<span class="hljs-number">10</span>, -<span class="hljs-number">8</span>, <span class="hljs-number">0</span>),
+  <span class="hljs-attribute">R0</span> invalid mem access &#x27;map_value_or_null&#x27;</code></pre></div></li><li><p><code>BPF_ST_MEM</code>以错误的对齐方式进行访问</p><div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">BPF_ST_MEM</span>(BPF_DW, BPF_REG_<span class="hljs-number">10</span>, -<span class="hljs-number">8</span>, <span class="hljs-number">0</span>),
   <span class="hljs-attribute">BPF_MOV64_REG</span>(BPF_REG_<span class="hljs-number">2</span>, BPF_REG_<span class="hljs-number">10</span>),
   <span class="hljs-attribute">BPF_ALU64_IMM</span>(BPF_ADD, BPF_REG_<span class="hljs-number">2</span>, -<span class="hljs-number">8</span>),
   <span class="hljs-attribute">BPF_LD_MAP_FD</span>(BPF_REG_<span class="hljs-number">1</span>, <span class="hljs-number">0</span>),
@@ -909,10 +474,7 @@ Error:
   <span class="hljs-attribute">5</span>: (<span class="hljs-number">15</span>) if r<span class="hljs-number">0</span> == <span class="hljs-number">0</span>x<span class="hljs-number">0</span> goto pc+<span class="hljs-number">1</span>
    <span class="hljs-attribute">R0</span>=map_ptr R<span class="hljs-number">10</span>=fp
   <span class="hljs-attribute">6</span>: (<span class="hljs-number">7</span>a) *(u<span class="hljs-number">64</span> *)(r<span class="hljs-number">0</span> +<span class="hljs-number">4</span>) = <span class="hljs-number">0</span>
-  <span class="hljs-attribute">misaligned</span> access <span class="hljs-literal">off</span> <span class="hljs-number">4</span> size <span class="hljs-number">8</span></code></pre></div>
-</li>
-<li><p><code>map_lookup_elem</code>结果R0为NULL，pc+2，执行指令8，会出现错误</p>
-<div class="hljs"><pre><code class="hljs apache"> <span class="hljs-attribute">BPF_ST_MEM</span>(BPF_DW, BPF_REG_<span class="hljs-number">10</span>, -<span class="hljs-number">8</span>, <span class="hljs-number">0</span>),
+  <span class="hljs-attribute">misaligned</span> access <span class="hljs-literal">off</span> <span class="hljs-number">4</span> size <span class="hljs-number">8</span></code></pre></div></li><li><p><code>map_lookup_elem</code>结果R0为NULL，pc+2，执行指令8，会出现错误</p><div class="hljs"><pre><code class="hljs apache"> <span class="hljs-attribute">BPF_ST_MEM</span>(BPF_DW, BPF_REG_<span class="hljs-number">10</span>, -<span class="hljs-number">8</span>, <span class="hljs-number">0</span>),
   <span class="hljs-attribute">BPF_MOV64_REG</span>(BPF_REG_<span class="hljs-number">2</span>, BPF_REG_<span class="hljs-number">10</span>),
   <span class="hljs-attribute">BPF_ALU64_IMM</span>(BPF_ADD, BPF_REG_<span class="hljs-number">2</span>, -<span class="hljs-number">8</span>),
   <span class="hljs-attribute">BPF_LD_MAP_FD</span>(BPF_REG_<span class="hljs-number">1</span>, <span class="hljs-number">0</span>),
@@ -935,10 +497,7 @@ Error:
 
   <span class="hljs-attribute">from</span> <span class="hljs-number">5</span> to <span class="hljs-number">8</span>: R<span class="hljs-number">0</span>=imm<span class="hljs-number">0</span> R<span class="hljs-number">10</span>=fp
   <span class="hljs-attribute">8</span>: (<span class="hljs-number">7</span>a) *(u<span class="hljs-number">64</span> *)(r<span class="hljs-number">0</span> +<span class="hljs-number">0</span>) = <span class="hljs-number">1</span>
-  <span class="hljs-attribute">R0</span> invalid mem access &#x27;imm&#x27;</code></pre></div>
-</li>
-<li><p><code>bpf_sk_lookup_tcp</code>三个参数<code>R1=ptr_to_ctx;R2=ptr_to_mem</code>，将R0置NULL前未检测、未释放引用</p>
-<div class="hljs"><pre><code class="hljs apache">  <span class="hljs-attribute">BPF_MOV64_IMM</span>(BPF_REG_<span class="hljs-number">2</span>, <span class="hljs-number">0</span>),
+  <span class="hljs-attribute">R0</span> invalid mem access &#x27;imm&#x27;</code></pre></div></li><li><p><code>bpf_sk_lookup_tcp</code>三个参数<code>R1=ptr_to_ctx;R2=ptr_to_mem</code>，将R0置NULL前未检测、未释放引用</p><div class="hljs"><pre><code class="hljs apache">  <span class="hljs-attribute">BPF_MOV64_IMM</span>(BPF_REG_<span class="hljs-number">2</span>, <span class="hljs-number">0</span>),
   <span class="hljs-attribute">BPF_STX_MEM</span>(BPF_W, BPF_REG_<span class="hljs-number">10</span>, BPF_REG_<span class="hljs-number">2</span>, -<span class="hljs-number">8</span>),
   <span class="hljs-attribute">BPF_MOV64_REG</span>(BPF_REG_<span class="hljs-number">2</span>, BPF_REG_<span class="hljs-number">10</span>),
   <span class="hljs-attribute">BPF_ALU64_IMM</span>(BPF_ADD, BPF_REG_<span class="hljs-number">2</span>, -<span class="hljs-number">8</span>),
@@ -959,10 +518,7 @@ Error:
   <span class="hljs-attribute">7</span>: (<span class="hljs-number">85</span>) call bpf_sk_lookup_tcp#<span class="hljs-number">65</span>
   <span class="hljs-attribute">8</span>: (b<span class="hljs-number">7</span>) r<span class="hljs-number">0</span> = <span class="hljs-number">0</span>
   <span class="hljs-attribute">9</span>: (<span class="hljs-number">95</span>) exit
-  <span class="hljs-attribute">Unreleased</span> reference id=<span class="hljs-number">1</span>, alloc_insn=<span class="hljs-number">7</span></code></pre></div>
-</li>
-<li><p>R0未检测是否为NULL就返回了</p>
-<div class="hljs"><pre><code class="hljs apache">  <span class="hljs-attribute">BPF_MOV64_IMM</span>(BPF_REG_<span class="hljs-number">2</span>, <span class="hljs-number">0</span>),
+  <span class="hljs-attribute">Unreleased</span> reference id=<span class="hljs-number">1</span>, alloc_insn=<span class="hljs-number">7</span></code></pre></div></li><li><p>R0未检测是否为NULL就返回了</p><div class="hljs"><pre><code class="hljs apache">  <span class="hljs-attribute">BPF_MOV64_IMM</span>(BPF_REG_<span class="hljs-number">2</span>, <span class="hljs-number">0</span>),
   <span class="hljs-attribute">BPF_STX_MEM</span>(BPF_W, BPF_REG_<span class="hljs-number">10</span>, BPF_REG_<span class="hljs-number">2</span>, -<span class="hljs-number">8</span>),
   <span class="hljs-attribute">BPF_MOV64_REG</span>(BPF_REG_<span class="hljs-number">2</span>, BPF_REG_<span class="hljs-number">10</span>),
   <span class="hljs-attribute">BPF_ALU64_IMM</span>(BPF_ADD, BPF_REG_<span class="hljs-number">2</span>, -<span class="hljs-number">8</span>),
@@ -981,186 +537,7 @@ Error:
   <span class="hljs-attribute">6</span>: (b<span class="hljs-number">7</span>) r<span class="hljs-number">5</span> = <span class="hljs-number">0</span>
   <span class="hljs-attribute">7</span>: (<span class="hljs-number">85</span>) call bpf_sk_lookup_tcp#<span class="hljs-number">65</span>
   <span class="hljs-attribute">8</span>: (<span class="hljs-number">95</span>) exit
-  <span class="hljs-attribute">Unreleased</span> reference id=<span class="hljs-number">1</span>, alloc_insn=<span class="hljs-number">7</span></code></pre></div>
-
-</li>
-</ul>
-<h2 id="测试"><a href="#测试" class="headerlink" title="测试"></a>测试</h2><p>内核附带测试模块，包含用于cBPF和eBPF的各种测试，在<code>lib/test_bpf.c</code>中 ，通过<code>Kconfig</code>启动：</p>
-<div class="hljs"><pre><code class="hljs ini"><span class="hljs-attr">CONFIG_TEST_BPF</span>=m</code></pre></div>
-
-<p>编译安装测试模块后，可以通过<code>insmod</code>与<code>modprobe</code>执行测试。结果在内核日志（dmesg）中可以找到。</p>
-<h2 id="附"><a href="#附" class="headerlink" title="附"></a>附</h2><p><img src="/img/bpf-2021022401.jpg" srcset="/img/loading.gif"></p>
-<p><img src="/img/bpf-2021022402.jpg" srcset="/img/loading.gif"></p>
-<p><img src="/img/bpf-2021022403.jpg" srcset="/img/loading.gif"></p>
-<h2 id="参考（图片来源）"><a href="#参考（图片来源）" class="headerlink" title="参考（图片来源）"></a>参考（图片来源）</h2><p><a target="_blank" rel="noopener" href="https://cloud.tencent.com/developer/inventory/600/article/1698426">https://cloud.tencent.com/developer/inventory/600/article/1698426</a></p>
-<p><a target="_blank" rel="noopener" href="https://damonyi.cc/2021/01/26/Linux-eBPF%E4%BB%8B%E7%BB%8D/">https://damonyi.cc/2021/01/26/Linux-eBPF%E4%BB%8B%E7%BB%8D/</a></p>
-
-            </div>
-            <hr>
-            <div>
-              <div class="post-metas mb-3">
-                
-                
-                  <div class="post-meta">
-                    <i class="iconfont icon-tags"></i>
-                    
-                      <a class="hover-with-bg" href="/tags/BPF/">BPF</a>
-                    
-                  </div>
-                
-              </div>
-              
-                <p class="note note-warning">本博客所有文章除特别声明外，转载请注明出处！</p>
-              
-              
-                <div class="post-prevnext row">
-                  <article class="post-prev col-6">
-                    
-                    
-                      <a href="/2021/02/26/Kubernetes-Controller%E5%BC%80%E5%8F%91%E5%88%A9%E5%99%A8-controller-runtime/">
-                        <i class="iconfont icon-arrowleft"></i>
-                        <span class="hidden-mobile">Kubernetes Controller开发利器:controller-runtime</span>
-                        <span class="visible-mobile">上一篇</span>
-                      </a>
-                    
-                  </article>
-                  <article class="post-next col-6">
-                    
-                    
-                      <a href="/2021/02/23/Calico-BGP%E5%8A%9F%E8%83%BD%E4%BB%8B%E7%BB%8D%EF%BC%9A%E5%AE%9E%E7%8E%B0/">
-                        <span class="hidden-mobile">Calico BGP功能介绍：实现</span>
-                        <span class="visible-mobile">下一篇</span>
-                        <i class="iconfont icon-arrowright"></i>
-                      </a>
-                    
-                  </article>
-                </div>
-              
-            </div>
-
-            
-          </article>
-        </div>
-      </div>
-    </div>
-    
-      <div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn">
-        <div id="toc">
-  <p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p>
-  <div id="tocbot"></div>
-</div>
-
-      </div>
-    
-  </div>
-</div>
-
-<!-- Custom -->
-
-
-    
-  </main>
-
-  
-    <a id="scroll-top-button" href="#" role="button">
-      <i class="iconfont icon-arrowup" aria-hidden="true"></i>
-    </a>
-  
-
-  
-    <div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel"
-     aria-hidden="true">
-  <div class="modal-dialog modal-dialog-scrollable modal-lg" role="document">
-    <div class="modal-content">
-      <div class="modal-header text-center">
-        <h4 class="modal-title w-100 font-weight-bold">搜索</h4>
-        <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close">
-          <span aria-hidden="true">&times;</span>
-        </button>
-      </div>
-      <div class="modal-body mx-3">
-        <div class="md-form mb-5">
-          <input type="text" id="local-search-input" class="form-control validate">
-          <label data-error="x" data-success="v"
-                 for="local-search-input">关键词</label>
-        </div>
-        <div class="list-group" id="local-search-result"></div>
-      </div>
-    </div>
-  </div>
-</div>
-  
-
-  
-
-  
-
-  <footer class="mt-5">
-  <div class="text-center py-3">
-    <div>
-      <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a>
-      <i class="iconfont icon-love"></i>
-      <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener">
-        <span>Fluid</span></a>
-    </div>
-    
-  <div class="statistics">
-    
-    
-
-    
-      
-        <!-- LeanCloud 统计PV -->
-        <span id="leancloud-site-pv-container" style="display: none">
-            总访问量 
-            <span id="leancloud-site-pv"></span>
-             次
-          </span>
-      
-      
-        <!-- LeanCloud 统计UV -->
-        <span id="leancloud-site-uv-container" style="display: none">
-            总访客数 
-            <span id="leancloud-site-uv"></span>
-             人
-          </span>
-      
-
-    
-  </div>
-
-
-    
-
-    
-  </div>
-</footer>
-
-<!-- SCRIPTS -->
-<script  src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js" ></script>
-<script  src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js" ></script>
-<script  src="/js/debouncer.js" ></script>
-<script  src="/js/main.js" ></script>
-
-<!-- Plugins -->
-
-
-  
-    <script  src="/js/lazyload.js" ></script>
-  
-
-
-
-  
-
-
-
-  <script defer src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js" ></script>
-  <script  src="/js/clipboard-use.js" ></script>
-
-
-
-  <script defer>
+  <span class="hljs-attribute">Unreleased</span> reference id=<span class="hljs-number">1</span>, alloc_insn=<span class="hljs-number">7</span></code></pre></div></li></ul><h2 id="测试"><a href="#测试" class="headerlink" title="测试"></a>测试</h2><p>内核附带测试模块，包含用于cBPF和eBPF的各种测试，在<code>lib/test_bpf.c</code>中 ，通过<code>Kconfig</code>启动：</p><div class="hljs"><pre><code class="hljs ini"><span class="hljs-attr">CONFIG_TEST_BPF</span>=m</code></pre></div><p>编译安装测试模块后，可以通过<code>insmod</code>与<code>modprobe</code>执行测试。结果在内核日志（dmesg）中可以找到。</p><h2 id="附"><a href="#附" class="headerlink" title="附"></a>附</h2><p><img src="/img/bpf-2021022401.jpg" srcset="/img/loading.gif"></p><p><img src="/img/bpf-2021022402.jpg" srcset="/img/loading.gif"></p><p><img src="/img/bpf-2021022403.jpg" srcset="/img/loading.gif"></p><h2 id="参考（图片来源）"><a href="#参考（图片来源）" class="headerlink" title="参考（图片来源）"></a>参考（图片来源）</h2><p><a target="_blank" rel="noopener" href="https://cloud.tencent.com/developer/inventory/600/article/1698426">https://cloud.tencent.com/developer/inventory/600/article/1698426</a></p><p><a target="_blank" rel="noopener" href="https://damonyi.cc/2021/01/26/Linux-eBPF%E4%BB%8B%E7%BB%8D/">https://damonyi.cc/2021/01/26/Linux-eBPF%E4%BB%8B%E7%BB%8D/</a></p></div><hr><div><div class="post-metas mb-3"><div class="post-meta"><i class="iconfont icon-tags"></i> <a class="hover-with-bg" href="/tags/BPF/">BPF</a></div></div><p class="note note-warning">本博客所有文章除特别声明外，转载请注明出处！</p><div class="post-prevnext row"><article class="post-prev col-6"><a href="/2021/02/26/Kubernetes-Controller%E5%BC%80%E5%8F%91%E5%88%A9%E5%99%A8-controller-runtime/"><i class="iconfont icon-arrowleft"></i> <span class="hidden-mobile">Kubernetes Controller开发利器:controller-runtime</span> <span class="visible-mobile">上一篇</span></a></article><article class="post-next col-6"> <a href="/2021/02/23/Calico-BGP%E5%8A%9F%E8%83%BD%E4%BB%8B%E7%BB%8D%EF%BC%9A%E5%AE%9E%E7%8E%B0/"><span class="hidden-mobile">Calico BGP功能介绍：实现</span> <span class="visible-mobile">下一篇</span><i class="iconfont icon-arrowright"></i></a></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
   (function () {
     // 查询存储的记录
     function getRecord(Counter, target) {
@@ -1337,44 +714,7 @@ Error:
         });
     }
   })();
-</script>
-
-
-
-
-
-
-  <script  src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js" ></script>
-  <script>
-    $(document).ready(function () {
-      var boardCtn = $('#board-ctn');
-      var boardTop = boardCtn.offset().top;
-
-      tocbot.init({
-        tocSelector: '#tocbot',
-        contentSelector: '#post-body',
-        headingSelector: 'h1,h2,h3,h4,h5,h6',
-        linkClass: 'tocbot-link',
-        activeLinkClass: 'tocbot-active-link',
-        listClass: 'tocbot-list',
-        isCollapsedClass: 'tocbot-is-collapsed',
-        collapsibleClass: 'tocbot-is-collapsible',
-        collapseDepth: 0,
-        scrollSmooth: true,
-        headingsOffset: -boardTop
-      });
-      if ($('.toc-list-item').length > 0) {
-        $('#toc').css('visibility', 'visible');
-      }
-    });
-  </script>
-
-
-
-
-
-  <script  src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js" ></script>
-  <script>
+</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
     anchors.options = {
       placement: "right",
       visible: "hover",
@@ -1386,67 +726,4 @@ Error:
       res.push(".markdown-body > " + item)
     }
     anchors.add(res.join(", "))
-  </script>
-
-
-
-  <script  src="/js/local-search.js" ></script>
-  <script>
-    var path = "/local-search.xml";
-    var inputArea = document.querySelector("#local-search-input");
-    inputArea.onclick = function () {
-      searchFunc(path, 'local-search-input', 'local-search-result');
-      this.onclick = null
-    }
-  </script>
-
-
-
-  <script  src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js" ></script>
-  <link  rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css" />
-
-  <script>
-    $('#post img:not(.no-zoom img, img[no-zoom]), img[zoom]').each(
-      function () {
-        var element = document.createElement('a');
-        $(element).attr('data-fancybox', 'images');
-        $(element).attr('href', $(this).attr('src'));
-        $(this).wrap(element);
-      }
-    );
-  </script>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-
-
-
-
-</body>
-</html>
+  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>
