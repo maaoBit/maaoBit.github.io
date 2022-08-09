@@ -1,0 +1,478 @@
+<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>Cilium流量分析(一) - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">Cilium流量分析(一)</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2022-08-09 10:44" pubdate>2022年8月9日 上午</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 3k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 49 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">Cilium流量分析(一)</h1><div class="markdown-body" id="post-body"><p>结合开发环境和代码进行Cilium流量的分析，会省略一些特性，比如Overlay、L7 Policy等。顺序是按照官方文档<a target="_blank" rel="noopener" href="https://docs.cilium.io/en/stable/concepts/ebpf/lifeofapacket/">Life of a Packet</a> 的图进行，本文是Endpoint to Endpoint(socket)的分析。</p><a id="more"></a><h2 id="环境部署"><a href="#环境部署" class="headerlink" title="环境部署"></a>环境部署</h2><p>使用cilium 1.12.0版本的代码库，在Mac上使用<br><code>K8S=1 NO_BUILD=1 TUNNEL_MODE_STRING=disabled SERVER_BOX=cilium/ubuntu-next-cgroupv2 SERVER_VERSION=0 contrib/vagrant/start.sh</code>部署单节点的Cilium Kubernetes集群。其中：<br>1）提前执行了<code>make build</code>，不然在vm里编译会很慢<br>2）修改了shell脚本里的cilium启动参数，主要：关闭了tunnel（默认是VXLAN）；启动cilium kube-proxy-replacement；启用sockops。</p><div class="hljs"><pre><code class="hljs shell">--- a/contrib/vagrant/scripts/03-install-kubernetes-worker.sh
++++ b/contrib/vagrant/scripts/03-install-kubernetes-worker.sh
+@@ -305,10 +305,10 @@ EOF
+
+ log &quot;reloading systemctl daemon and enabling and restarting kube-proxy&quot;
+ sudo systemctl daemon-reload
+-sudo systemctl enable kube-proxy
+-sudo systemctl restart kube-proxy
++# sudo systemctl enable kube-proxy
++# sudo systemctl restart kube-proxy
+
+-sudo systemctl status kube-proxy --no-pager
++# sudo systemctl status kube-proxy --no-pager
+
+--- a/contrib/vagrant/start.sh
++++ b/contrib/vagrant/start.sh
+@@ -306,7 +306,7 @@ function write_cilium_cfg() &#123;
+
+     cilium_options=&quot;\
+       --debug --pprof --enable-hubble --hubble-listen-address :4244 --enable-k8s-event-handover \
+-      --k8s-require-ipv4-pod-cidr --enable-bandwidth-manager --kube-proxy-replacement=disabled \
++      --k8s-require-ipv4-pod-cidr --enable-bandwidth-manager --kube-proxy-replacement=strict --cgroup-root=/sys/fs/cgroup --sockops-enable \
+       --enable-remote-node-identity&quot;
+     cilium_operator_options=&quot; --debug&quot;</code></pre></div><p>3）重新做了个box：cilium/ubuntu-next-cgroupv2，就是在cilium/ubuntu-next之上开启了<a target="_blank" rel="noopener" href="https://github.com/systemd/systemd/blob/main/docs/CGROUP_DELEGATION.md#three-different-tree-setups-">cgroupv2 unified mode</a>。<code>BPF_PROG_TYPE_CGROUP_XXX</code>需要cgroupv2才能使用。</p><p>环境部署完后，再部署个pod/nc-k8s1，service/nc-k8s1。</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> kubectl get po -o wide</span>
+NAME      READY   STATUS    RESTARTS   AGE   IP           NODE   NOMINATED NODE   READINESS GATES
+nc-k8s1   1/1     Running   0          5s    10.11.0.99   k8s1   &lt;none&gt;           &lt;none&gt;
+<span class="hljs-meta">$</span><span class="bash"> kubectl get node -o wide</span>
+NAME   STATUS   ROLES    AGE   VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION         CONTAINER-RUNTIME
+k8s1   Ready    &lt;none&gt;   61m   v1.24.2   192.168.60.11   &lt;none&gt;        Ubuntu 20.04.4 LTS   5.18.0-g7e062cda7d90   containerd://1.6.3
+<span class="hljs-meta">$</span><span class="bash"> systemctl status kube-proxy</span>
+● kube-proxy.service - Kubernetes Kube-Proxy Server
+     Loaded: loaded (/etc/systemd/system/kube-proxy.service; disabled; vendor preset: enabled)
+     Active: inactive (dead)
+       Docs: https://kubernetes.io/docs/concepts/overview/components/#kube-proxy
+             https://kubernetes.io/docs/reference/generated/kube-proxy/
+<span class="hljs-meta">$</span><span class="bash"> kubectl get svc -o wide</span>
+NAME         TYPE        CLUSTER-IP    EXTERNAL-IP   PORT(S)        AGE    SELECTOR
+kubernetes   ClusterIP   172.20.0.1    &lt;none&gt;        443/TCP        8m2s   &lt;none&gt;
+nc-k8s1      NodePort    172.20.0.84   &lt;none&gt;        80:32438/TCP   9s     app=nc-k8s1</code></pre></div><h2 id="Endpoint-to-Endpoint-socket"><a href="#Endpoint-to-Endpoint-socket" class="headerlink" title="Endpoint to Endpoint(socket)"></a>Endpoint to Endpoint(socket)</h2><h3 id="流量图"><a href="#流量图" class="headerlink" title="流量图"></a>流量图</h3><p><img src="/img/cilium_bpf_datapath_e2e.svg" srcset="/img/loading.gif"></p><p>这一篇主要分析下下面那张socket的图，tc的后面再分析。图中的<code>bpf_sockops.c</code>与<code>bpf_redir.c</code>是<code>BPF_PROG_TYPE_SOCK_OPS</code>与 <code>BPF_PROG_TYPE_SK_SKB</code>配合做的一个socket层的redirect，先由<code>bpf_sockops.c</code>维护一个<code>BPF_MAP_TYPE_SOCKHASH</code>类型的Map，再由<code>bpf_redir.c</code>根据Map将数据重定向到对应的socket。</p><h3 id="代码实现"><a href="#代码实现" class="headerlink" title="代码实现"></a>代码实现</h3><p>分别查看bpf_redir、bpf_sockops与map。</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> bpftool prog show pinned /sys/fs/bpf/bpf_redir</span>
+3228: sk_msg  name bpf_redir_proxy  tag 2dfc83bbb7ceae9b  gpl
+	loaded_at 2022-08-05T06:58:48+0000  uid 0
+	xlated 1064B  jited 590B  memlock 4096B  map_ids 402,406,422
+	btf_id 233
+<span class="hljs-meta">$</span><span class="bash"> bpftool prog show pinned /sys/fs/bpf/bpf_sockops</span>
+3222: sock_ops  name bpf_sockmap  tag 00baed82e9c683bc  gpl
+	loaded_at 2022-08-05T06:58:48+0000  uid 0
+	xlated 1656B  jited 888B  memlock 4096B  map_ids 417,402,406,98,422
+	btf_id 225
+<span class="hljs-meta">$</span><span class="bash"> bpftool map show id 422</span>
+422: sockhash  name cilium_sock_ops  flags 0x0
+	key 44B  value 4B  max_entries 65535  memlock 3145728B</code></pre></div><p>看下大体的实现：</p><div class="hljs"><pre><code class="hljs c"><span class="hljs-comment">// 负责进行socket重定向</span>
+__section(<span class="hljs-string">&quot;sk_msg&quot;</span>)
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">bpf_redir_proxy</span><span class="hljs-params">(struct sk_msg_md *msg)</span></span>
+<span class="hljs-function"></span>&#123;
+  sk_msg_extract4_key(msg, &amp;key); <span class="hljs-comment">// 从msg中获取map的key,key包括了socket的源地址、源端口、目标地址、目标端口、IPFamily</span>
+  info = lookup_ip4_remote_endpoint(key.dip4); <span class="hljs-comment">// 从ipcache map中查找对应的endpoint，用于policy的判断。ipcache存储了cilium管理的endpoint，以ip地址为key，value为对应的endpoint信息，比如identity，cilium的网络策略的实现依赖于identity</span>
+  verdict = policy_sk_egress(dst_id, key.sip4, (__u16)key.dport); <span class="hljs-comment">// policy的判断</span>
+  <span class="hljs-keyword">if</span> (verdict &gt;= <span class="hljs-number">0</span>)
+    msg_redirect_hash(msg, &amp;SOCK_OPS_MAP, &amp;key, flags); <span class="hljs-comment">//调用bpf_sk_redirect_map helper function，根据sockhash map进行重定向</span>
+&#125;
+
+<span class="hljs-comment">// 负责进行sockhash map的维护</span>
+_section(<span class="hljs-string">&quot;sockops&quot;</span>)
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">bpf_sockmap</span><span class="hljs-params">(struct bpf_sock_ops *skops)</span></span>
+<span class="hljs-function"></span>&#123;
+  <span class="hljs-keyword">switch</span> (op) &#123;
+  <span class="hljs-keyword">case</span> BPF_SOCK_OPS_PASSIVE_ESTABLISHED_CB: <span class="hljs-comment">// 分别对应被动连接与主动连接，因此sockhash map里两个方向的socket都会记录</span>
+  <span class="hljs-keyword">case</span> BPF_SOCK_OPS_ACTIVE_ESTABLISHED_CB:
+  ...
+<span class="hljs-meta">#<span class="hljs-meta-keyword">ifdef</span> ENABLE_IPV4</span>
+    <span class="hljs-keyword">if</span> (family == AF_INET)
+      bpf_sock_ops_ipv4(skops); <span class="hljs-comment">// 当socket状态变为ESTABLISHED后，执行bpf_sock_ops_ipv4</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+  ...
+  &#125;
+&#125;
+
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">inline</span> <span class="hljs-keyword">void</span> <span class="hljs-title">bpf_sock_ops_ipv4</span><span class="hljs-params">(struct bpf_sock_ops *skops)</span></span>
+<span class="hljs-function"></span>&#123;
+  sk_extract4_key(skops, &amp;key);
+  <span class="hljs-keyword">if</span> (<span class="hljs-number">1</span>) &#123;
+    info = lookup_ip4_remote_endpoint(key.dip4); <span class="hljs-comment">// 从ipcache map中查找有对应的endpoint</span>
+    <span class="hljs-keyword">if</span> (info != <span class="hljs-literal">NULL</span> &amp;&amp; info-&gt;sec_label)
+      dst_id = info-&gt;sec_label;
+    <span class="hljs-keyword">else</span>
+      dst_id = WORLD_ID;
+  &#125;
+
+  verdict = policy_sk_egress(dst_id, key.sip4, (__u16)key.dport); <span class="hljs-comment">// policy策略判断</span>
+
+  <span class="hljs-comment">/* Lookup IPv4 address, this will return a match if:</span>
+<span class="hljs-comment">   * - The destination IP address belongs to the local endpoint manage</span>
+<span class="hljs-comment">   *   by Cilium.</span>
+<span class="hljs-comment">   * - The destination IP address is an IP address associated with the</span>
+<span class="hljs-comment">   *   host itself.</span>
+<span class="hljs-comment">   * Then because these are local IPs that have passed LB/Policy/NAT</span>
+<span class="hljs-comment">   * blocks redirect directly to socket.</span>
+<span class="hljs-comment">   */</span>
+  exists = __lookup_ip4_endpoint(key.dip4);
+  <span class="hljs-keyword">if</span> (!exists)
+    <span class="hljs-keyword">return</span>;
+
+  sock_hash_update(skops, &amp;SOCK_OPS_MAP, &amp;key, BPF_NOEXIST); <span class="hljs-comment">// 更新sockhash map</span>
+&#125;</code></pre></div><p>代码逻辑比较简单，其中重定向是通过bpf helper函数<code>bpf_msg_redirect_hash()</code>实现，会根据sockhash map中的key直接进行转发。此外涉及另外两个map，其中<code>cilium_ipcache</code>是<code>lookup_ip4_remote_endpoint()</code>查询的map，<code>cilium_lxc</code>是<code>__lookup_ip4_endpoint</code>查询的map。</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> cilium map get cilium_ipcache | grep 10.11.0.99</span>
+10.11.0.99/32                             identity=3187 encryptkey=0 tunnelendpoint=0.0.0.0   sync
+<span class="hljs-meta">$</span><span class="bash"> cilium map get cilium_lxc | grep 10.11.0.99</span>
+10.11.0.99:0     id=25    flags=0x0000 ifindex=22  mac=DA:96:96:60:21:7E nodemac=9A:37:05:A5:EA:14   sync</code></pre></div><h3 id="测试"><a href="#测试" class="headerlink" title="测试"></a>测试</h3><p>接下来手动测试下重定向，先使用bpftool查看map，有4条数据。</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> bpftool map dump id 422</span>
+key:
+0a 0b 00 0a 00 00 00 00  00 00 00 00 00 00 00 00
+0a 0b 00 e9 00 00 00 00  00 00 00 00 00 00 00 00
+01 00 00 00 10 90 00 00  c4 e6 00 00
+value:
+No space left on device
+key:
+c0 a8 3c 0b 00 00 00 00  00 00 00 00 00 00 00 00
+c0 a8 3c 0b 00 00 00 00  00 00 00 00 00 00 00 00
+01 00 00 00 10 90 00 00  d6 70 00 00
+value:
+No space left on device
+key:
+c0 a8 3c 0b 00 00 00 00  00 00 00 00 00 00 00 00
+c0 a8 3c 0b 00 00 00 00  00 00 00 00 00 00 00 00
+01 00 00 00 d6 70 00 00  10 90 00 00
+value:
+No space left on device
+key:
+0a 0b 00 e9 00 00 00 00  00 00 00 00 00 00 00 00
+0a 0b 00 0a 00 00 00 00  00 00 00 00 00 00 00 00
+01 00 00 00 c4 e6 00 00  10 90 00 00
+value:
+No space left on device
+Found 0 elements</code></pre></div><p>在节点上执行<code>tcpdump -i lxcf4d0f7379d34 -enn</code>，其中<code>lxcf4d0f7379d34</code>是nc-k8s1容器的veth pair宿主机一端。</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> kubectl <span class="hljs-built_in">exec</span> -it nc-k8s1 -- ip a</span>
+1: lo: &lt;LOOPBACK,UP,LOWER_UP&gt; mtu 65536 qdisc noqueue state UNKNOWN qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+    inet 127.0.0.1/8 scope host lo
+       valid_lft forever preferred_lft forever
+    inet6 ::1/128 scope host
+       valid_lft forever preferred_lft forever
+21: eth0@if22: &lt;BROADCAST,MULTICAST,UP,LOWER_UP,M-DOWN&gt; mtu 1500 qdisc noqueue state UP qlen 1000
+    link/ether da:96:96:60:21:7e brd ff:ff:ff:ff:ff:ff
+    inet 10.11.0.99/32 scope global eth0
+       valid_lft forever preferred_lft forever
+    inet6 fd04::b033/128 scope global flags 02
+       valid_lft forever preferred_lft forever
+    inet6 fe80::d896:96ff:fe60:217e/64 scope link
+       valid_lft forever preferred_lft forever
+<span class="hljs-meta">$</span><span class="bash"> ip a</span>
+...
+22: lxcf4d0f7379d34@if21: &lt;BROADCAST,MULTICAST,UP,LOWER_UP&gt; mtu 1500 qdisc noqueue state UP group default qlen 1000
+    link/ether 9a:37:05:a5:ea:14 brd ff:ff:ff:ff:ff:ff link-netns cni-83b0571c-c726-6eaa-1e3f-5395347df6ea
+    inet6 fe80::9837:5ff:fea5:ea14/64 scope link
+       valid_lft forever preferred_lft forever</code></pre></div><p>在节点上执行<code>nc 10.11.0.99 80</code>，（nc-k8s1里执行了nc -lv 80）可以看到tcpdump抓到了tcp三次握手的包。但后续的数据包不会被tcpdump抓到，因为后续的数据包通过socket重定向进行转发，不再通过包括tc在内的内核协议栈，tcpdump也就无法在tc层抓到相应的数据包。</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> nc 10.11.0.99 80</span>
+hello
+package
+
+<span class="hljs-meta">$</span><span class="bash"> kubectl logs -f nc-k8s1</span>
+Listening on [0.0.0.0] (family 0, port 80)
+Connection from 10.11.0.233 47638 received!
+hello
+package</code></pre></div><p>在断开连接前，再次查看sockhash map，可以看到新增的两条数据，分别是tcp两端socket在建立是加入的。</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> bpftool map dump id 422 | grep key | wc -l</span>
+6</code></pre></div><h3 id="Service实现（socket）"><a href="#Service实现（socket）" class="headerlink" title="Service实现（socket）"></a>Service实现（socket）</h3><p>cilium在socket层的bpf程序除了上面两个外，还有就是cgroupv2类型的bpf程序也会在socket操作时触发，cilium用来实现kubernetes service的功能。</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> bpftool cgroup show /sys/fs/cgroup/</span>
+ID       AttachType      AttachFlags     Name
+3222     sock_ops                        bpf_sockmap
+3280     connect4                        sock4_connect
+3260     connect6                        sock6_connect
+3288     post_bind4                      sock4_post_bind
+3268     post_bind6                      sock6_post_bind
+3292     sendmsg4                        sock4_sendmsg
+3272     sendmsg6                        sock6_sendmsg
+3296     recvmsg4                        sock4_recvmsg
+3276     recvmsg6                        sock6_recvmsg
+3284     getpeername4                    sock4_getpeername
+3264     getpeername6                    sock6_getpeername</code></pre></div><p>以ipv4 tcp的service为例，在socket connect调用时触发bpf程序。</p><div class="hljs"><pre><code class="hljs c">__section(<span class="hljs-string">&quot;cgroup/connect4&quot;</span>)
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">sock4_connect</span><span class="hljs-params">(struct bpf_sock_addr *ctx)</span></span>
+<span class="hljs-function"></span>&#123;
+	....
+	__sock4_xlate_fwd(ctx, ctx, <span class="hljs-literal">false</span>); 
+	<span class="hljs-keyword">return</span> SYS_PROCEED;
+&#125;</code></pre></div><div class="hljs"><pre><code class="hljs c"><span class="hljs-keyword">static</span> __always_inline <span class="hljs-keyword">int</span> __sock4_xlate_fwd(struct bpf_sock_addr *ctx,
+					     struct bpf_sock_addr *ctx_full,
+					     <span class="hljs-keyword">const</span> <span class="hljs-keyword">bool</span> udp_only)
+&#123;
+	<span class="hljs-keyword">if</span> (is_defined(ENABLE_SOCKET_LB_HOST_ONLY) &amp;&amp; !in_hostns) <span class="hljs-comment">//验证是否符合lb host only</span>
+		<span class="hljs-keyword">return</span> -ENXIO;
+	<span class="hljs-keyword">if</span> (!udp_only &amp;&amp; !sock_proto_enabled(ctx-&gt;protocol))  <span class="hljs-comment">//验证协议类型</span>
+		<span class="hljs-keyword">return</span> -ENOTSUP;
+	
+	svc = lb4_lookup_service(&amp;key, <span class="hljs-literal">true</span>); <span class="hljs-comment">//找clusterIP</span>
+	<span class="hljs-keyword">if</span> (!svc)
+		svc = sock4_wildcard_lookup_full(&amp;key, in_hostns); <span class="hljs-comment">//找nodeport与hostport</span>
+	<span class="hljs-keyword">if</span> (!svc)
+		<span class="hljs-keyword">return</span> -ENXIO;
+
+	<span class="hljs-keyword">if</span> (lb4_svc_is_affinity(svc)) &#123;  <span class="hljs-comment">//设置了亲和性</span>
+		backend_id = lb4_affinity_backend_id_by_netns(svc, &amp;id);
+		<span class="hljs-keyword">if</span> (backend_id != <span class="hljs-number">0</span>) &#123; 
+			backend = __lb4_lookup_backend(backend_id); 
+			<span class="hljs-keyword">if</span> (!backend) <span class="hljs-comment">//后端pod已不存在，重新调度</span>
+				backend_id = <span class="hljs-number">0</span>;
+		&#125;
+	&#125;
+
+	<span class="hljs-keyword">if</span> (backend_id == <span class="hljs-number">0</span>) &#123;
+		key.backend_slot = (sock_select_slot(ctx_full) % svc-&gt;count) + <span class="hljs-number">1</span>;
+		backend_slot = __lb4_lookup_backend_slot(&amp;key);
+		backend_id = backend_slot-&gt;backend_id;
+		backend = __lb4_lookup_backend(backend_id);
+	&#125;
+
+	<span class="hljs-keyword">if</span> (lb4_svc_is_affinity(svc) &amp;&amp; !backend_from_affinity) <span class="hljs-comment">//如果是service设置了亲和性，并且此次是重新负载了，则进行affinity map的更新</span>
+		lb4_update_affinity_by_netns(svc, &amp;id, backend_id);
+		
+	<span class="hljs-keyword">if</span> (sock4_update_revnat(ctx_full, backend, &amp;orig_key,
+				svc-&gt;rev_nat_index) &lt; <span class="hljs-number">0</span>) &#123;
+		update_metrics(<span class="hljs-number">0</span>, METRIC_EGRESS, REASON_LB_REVNAT_UPDATE);
+		<span class="hljs-keyword">return</span> -ENOMEM;
+	&#125;
+	<span class="hljs-comment">// 进行socket的DNAT</span>
+	ctx-&gt;user_ip4 = backend-&gt;address;
+	ctx_set_port(ctx, backend-&gt;port);
+	<span class="hljs-keyword">return</span> <span class="hljs-number">0</span>;
+&#125;</code></pre></div><p>流程如下：<br>1）先找到对应的Service。通过<code>lb4_lookup_service()</code>查找是否是某个Service的ClusterIP。这块查询的是hash map <code>cilium_lb4_services_v2</code>，key和value如下。</p><div class="hljs"><pre><code class="hljs c"><span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">lb4_key</span> &#123;</span>
+	__be32 address;		<span class="hljs-comment">/* Service virtual IPv4 address */</span>
+	__be16 dport;		<span class="hljs-comment">/* L4 port filter, if unset, all ports apply */</span>
+	__u16 backend_slot;	<span class="hljs-comment">/* Backend iterator, 0 indicates the svc frontend */</span>
+	__u8 proto;		<span class="hljs-comment">/* L4 protocol, currently not used (set to 0) */</span>
+	__u8 scope;		<span class="hljs-comment">/* LB_LOOKUP_SCOPE_* for externalTrafficPolicy=Local */</span>
+	__u8 pad[<span class="hljs-number">2</span>];
+&#125;;
+<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">lb4_service</span> &#123;</span>
+	<span class="hljs-keyword">union</span> &#123;
+		__u32 backend_id;	<span class="hljs-comment">/* Backend ID in lb4_backends */</span>
+		__u32 affinity_timeout;	<span class="hljs-comment">/* In seconds, only for svc frontend */</span>
+		__u32 l7_lb_proxy_port;	<span class="hljs-comment">/* In host byte order, only when flags2 &amp;&amp; SVC_FLAG_L7LOADBALANCER */</span>
+	&#125;;
+	<span class="hljs-comment">/* For the service frontend, count denotes number of service backend</span>
+<span class="hljs-comment">	 * slots (otherwise zero).</span>
+<span class="hljs-comment">	 */</span>
+	__u16 count;
+	__u16 rev_nat_index;	<span class="hljs-comment">/* Reverse NAT ID in lb4_reverse_nat */</span>
+	__u8 flags;
+	__u8 flags2;
+	__u8  pad[<span class="hljs-number">2</span>];
+&#125;;</code></pre></div><p>以环境中的service/nc-k8s1为例，clusterIP为<code>172.20.0.84</code>，map信息为：</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> cilium map get cilium_lb4_services_v2  | grep 172.20.0.84</span>
+172.20.0.84:80        10800 1 (6) [0x10 0x0]    sync</code></pre></div><p>通过bpftool可以看到两条记录，第一条是service backend，记录了后端nc-k8s1 pod信息，第二条是service frontend记录了service的信息。</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> bpftool map dump pinned /sys/fs/bpf/tc/globals/cilium_lb4_services_v2 | grep <span class="hljs-string">&quot;ac 14 00 54&quot;</span></span>
+key: ac 14 00 54 00 50 01 00  00 00 00 00  value: 14 00 00 00 00 00 00 06  00 00 00 00
+key: ac 14 00 54 00 50 00 00  00 00 00 00  value: 30 2a 00 00 01 00 00 06  10 00 00 00</code></pre></div><p>整理一下就是：</p><div class="hljs"><pre><code class="hljs json">[&#123;
+    <span class="hljs-attr">&quot;key&quot;</span>: &#123;
+		<span class="hljs-attr">&quot;address&quot;</span>: <span class="hljs-string">&quot;172.20.0.84&quot;</span>,
+		<span class="hljs-attr">&quot;dport&quot;</span>: <span class="hljs-number">80</span>,
+		<span class="hljs-attr">&quot;backend_slot&quot;</span>: <span class="hljs-number">1</span>,
+		<span class="hljs-attr">&quot;proto&quot;</span>: <span class="hljs-number">0</span>,
+		<span class="hljs-attr">&quot;scope&quot;</span>: <span class="hljs-number">0</span>
+	&#125;,
+	<span class="hljs-attr">&quot;value&quot;</span>: &#123;
+		<span class="hljs-attr">&quot;backend_id&quot;</span>: <span class="hljs-number">0x14</span>,
+		<span class="hljs-attr">&quot;count&quot;</span>: <span class="hljs-number">0</span>,
+		<span class="hljs-attr">&quot;rev_nat_index&quot;</span>: <span class="hljs-number">0x06</span>
+	&#125;
+
+&#125;, &#123;
+	<span class="hljs-attr">&quot;key&quot;</span>: &#123;
+		<span class="hljs-attr">&quot;address&quot;</span>: <span class="hljs-string">&quot;172.20.0.84&quot;</span>,
+		<span class="hljs-attr">&quot;dport&quot;</span>: <span class="hljs-number">80</span>,
+		<span class="hljs-attr">&quot;backend_slot&quot;</span>: <span class="hljs-number">0</span>,
+		<span class="hljs-attr">&quot;proto&quot;</span>: <span class="hljs-number">0</span>,
+		<span class="hljs-attr">&quot;scope&quot;</span>: <span class="hljs-number">0</span>
+	&#125;,
+	<span class="hljs-attr">&quot;value&quot;</span>: &#123;
+		<span class="hljs-attr">&quot;affinity_timeout&quot;</span>: <span class="hljs-number">0x302a</span>,
+		<span class="hljs-attr">&quot;count&quot;</span>: <span class="hljs-number">1</span>,
+		<span class="hljs-attr">&quot;rev_nat_index&quot;</span>: <span class="hljs-number">0x06</span>
+	&#125;
+&#125;]</code></pre></div><p><code>lb4_lookup_service()</code>是根据ClusterIP查找对应的service，如果<code>lb4_lookup_service()</code>查找失败，会使用<code>sock4_wildcard_lookup_full()</code>查找nodeport、hostport记录，环境中的nc-k8s1 service的nodeport是32438，map中的记录如下所示。</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> cilium map get cilium_lb4_services_v2  | grep 32438</span>
+10.0.2.15:32438       10800 1 (11) [0x52 0x0]   sync
+0.0.0.0:32438         10800 1 (8) [0x12 0x0]    sync
+192.168.59.15:32438   10800 1 (10) [0x52 0x0]   sync
+192.168.61.11:32438   10800 1 (13) [0x52 0x0]   sync
+192.168.60.11:32438   10800 1 (12) [0x52 0x0]   sync</code></pre></div><p>2）亲和性逻辑。通过<code>lb4_affinity_backend_id_by_netns()</code>查找亲和性的后端。这里用到的map是<code>cilium_lb4_affinity</code> ，key中记录了clientIP、访问时间等，map在进行负载之后通过<code>lb4_update_affinity_by_netns()</code>进行更新。</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash">  bpftool map dump pinned /sys/fs/bpf/tc/globals/cilium_lb4_affinity</span>
+key: 01 00 00 00 00 00 00 00  00 06 01 00 00 00 00 00
+value: 14 1d 00 00 00 00 00 00  14 00 00 00 00 00 00 00
+Found 1 element</code></pre></div><div class="hljs"><pre><code class="hljs c"><span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">lb_affinity_val</span> &#123;</span>
+	__u64 last_used;
+	__u32 backend_id; 
+	__u32 pad;
+&#125; __packed;</code></pre></div><p>通过<code>lb4_affinity_backend_id_by_netns()</code>找到backend_ip后，再通过<code>__lb4_lookup_backend()</code>查找后端，查找的map为<code>cilium_lb4_backends_v2</code>，key为<code>backend_ip</code>，value中记录了podIP</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> cilium map get cilium_lb4_backends_v2</span>
+Key   Value                 State   Error
+20    ANY://10.11.0.99:80   sync</code></pre></div><p>3）选择后端Pod进行负载。<code>sock_select_slot()</code>方法用于选择后端Pod，对TCP使用<code>get_prandom_u32()</code>进行随机选择，对于UDP则对socket cookie作hash进行选择。根据<code>backend_slot</code>查询<code>backend_id</code>，最终查询到<code>backend</code>。</p><p>4）更新nat表。如下记录，表示 <code>172.20.0.84:80</code>(<code>ac 14 00 54 00 50</code>)发送到了<code>10.11.0.99：80</code>（<code>0a 0b 00 63 00 50</code>），其中前面64位是socket cookie。这个表主要在recvmsg4、getpeername4时用于进行DNAT，查了相关资料，部分UDP应用需要检测回包源地址，因此需要进行DNAT。而getpeername通过DNAT可以获取到Service的地址，做到对完全应用透明。</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> bpftool map dump pinned /sys/fs/bpf/tc/globals/cilium_lb4_reverse_sk | grep <span class="hljs-string">&quot;ac 14 00 54 00 50&quot;</span></span>
+key: 0b 3e 00 00 00 00 00 00  0a 0b 00 63 00 50 00 00  value: ac 14 00 54 00 50 00 06</code></pre></div></div><hr><div><div class="post-metas mb-3"><div class="post-meta"><i class="iconfont icon-tags"></i> <a class="hover-with-bg" href="/tags/BPF/">BPF</a> <a class="hover-with-bg" href="/tags/Cilium/">Cilium</a></div></div><p class="note note-warning">转载请注明出处</p><div class="post-prevnext row"><article class="post-prev col-6"></article><article class="post-next col-6"> <a href="/2021/03/01/%E7%AC%94%E8%AE%B0-BPF-and-XDP-Reference-Guide-cilium/"><span class="hidden-mobile">[笔记]BPF and XDP Reference Guide(cilium)</span> <span class="visible-mobile">下一篇</span><i class="iconfont icon-arrowright"></i></a></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
+  (function () {
+    // 查询存储的记录
+    function getRecord(Counter, target) {
+      return new Promise(function (resolve, reject) {
+        Counter('get', '/classes/Counter?where=' + encodeURIComponent(JSON.stringify({target})))
+          .then(resp => resp.json())
+          .then(({results, code, error}) => {
+            if (code === 401) {
+              throw error;
+            }
+            if (results && results.length > 0) {
+              var record = results[0];
+              resolve(record);
+            } else {
+              Counter('post', '/classes/Counter', {target, time: 0})
+                .then(resp => resp.json())
+                .then((record, error) => {
+                  if (error) {
+                    throw error;
+                  }
+                  resolve(record);
+                }).catch(error => {
+                console.error('Failed to create', error);
+                reject(error);
+              });
+            }
+          }).catch((error) => {
+          console.error('LeanCloud Counter Error:', error);
+          reject(error);
+        });
+      })
+    }
+
+    // 发起自增请求
+    function increment(Counter, incrArr) {
+      return new Promise(function (resolve, reject) {
+        Counter('post', '/batch', {
+          "requests": incrArr
+        }).then((res) => {
+          res = res.json();
+          if (res.error) {
+            throw res.error;
+          }
+          resolve(res);
+        }).catch((error) => {
+          console.error('Failed to save visitor count', error);
+          reject(error);
+        });
+      });
+    }
+
+    // 构建自增请求体
+    function buildIncrement(objectId) {
+      return {
+        "method": "PUT",
+        "path": `/1.1/classes/Counter/${ objectId }`,
+        "body": {
+          "time": {
+            '__op': 'Increment',
+            'amount': 1
+          }
+        }
+      }
+    }
+
+    // 校验是否为有效的 UV
+    function validUV() {
+      var key = 'LeanCloud_UV_Flag';
+      var flag = localStorage.getItem(key);
+      if (flag) {
+        // 距离标记小于 24 小时则不计为 UV
+        if (new Date().getTime() - parseInt(flag) <= 86400000) {
+          return false;
+        }
+      }
+      localStorage.setItem(key, new Date().getTime().toString());
+      return true;
+    }
+
+    function addCount(Counter) {
+      var enableIncr = 'true' === 'true' && window.location.hostname !== 'localhost';
+      var getterArr = [];
+      var incrArr = [];
+
+      // 请求 PV 并自增
+      var pvCtn = document.querySelector('#leancloud-site-pv-container');
+      if (pvCtn || enableIncr) {
+        var pvGetter = getRecord(Counter, 'site-pv').then((record) => {
+          incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-pv');
+          if (ele) {
+            ele.innerText = record.time + 1;
+            if (pvCtn) {
+              pvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(pvGetter);
+      }
+
+      // 请求 UV 并自增
+      var uvCtn = document.querySelector('#leancloud-site-uv-container');
+      if (uvCtn || enableIncr) {
+        var uvGetter = getRecord(Counter, 'site-uv').then((record) => {
+          var vuv = validUV();
+          vuv && incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-uv');
+          if (ele) {
+            ele.innerText = record.time + (vuv ? 1 : 0);
+            if (uvCtn) {
+              uvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(uvGetter);
+      }
+
+      // 如果是文章，请求文章的浏览数，并自增
+      if ('true' === 'true') {
+        var viewCtn = document.querySelector('#leancloud-post-views-container');
+        if (viewCtn || enableIncr) {
+          var target = decodeURI('/2022/08/09/Cilium%E6%B5%81%E9%87%8F%E5%88%86%E6%9E%90-%E4%B8%80/');
+          var viewGetter = getRecord(Counter, target).then((record) => {
+            incrArr.push(buildIncrement(record.objectId))
+            if (viewCtn) {
+              var ele = document.querySelector('#leancloud-post-views');
+              if (ele) {
+                ele.innerText = (record.time || 0) + 1;
+                viewCtn.style.display = 'inline';
+              }
+            }
+          });
+          getterArr.push(viewGetter);
+        }
+      }
+
+      // 如果启动计数自增，批量发起自增请求
+      if (enableIncr) {
+        Promise.all(getterArr).then(() => {
+          incrArr.length > 0 && increment(Counter, incrArr);
+        })
+      }
+    }
+
+    var app_id = 'rGBkjlpYFYPq3Mztf0uHkwm2-gzGzoHsz'
+    var app_key = 'IwuJ6qbGLXA8pB3qeHHjuDT3'
+    var server_url = 'https://rgbkjlpy.lc-cn-n1-shared.com'
+
+    function fetchData(api_server) {
+      var Counter = (method, url, data) => {
+        return fetch(`${ api_server }/1.1${ url }`, {
+          method,
+          headers: {
+            'X-LC-Id': app_id,
+            'X-LC-Key': app_key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data)
+        });
+      };
+
+      addCount(Counter);
+    }
+
+    var api_server = app_id.slice(-9) !== '-MdYXbMMI' ? server_url : `https://${ app_id.slice(0, 8).toLowerCase() }.api.lncldglobal.com`;
+
+    if (api_server) {
+      fetchData(api_server);
+    } else {
+      fetch('https://app-router.leancloud.cn/2/route?appId=' + app_id)
+        .then(resp => resp.json())
+        .then(({api_server}) => {
+          fetchData('https://' + api_server);
+        });
+    }
+  })();
+</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>
