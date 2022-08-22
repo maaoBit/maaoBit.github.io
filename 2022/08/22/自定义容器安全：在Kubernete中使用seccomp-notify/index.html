@@ -1,0 +1,318 @@
+<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>自定义容器安全：在Kubernete中使用seccomp notify - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">自定义容器安全：在Kubernete中使用seccomp notify</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2022-08-22 13:56" pubdate>2022年8月22日 下午</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 2k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 28 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">自定义容器安全：在Kubernete中使用seccomp notify</h1><div class="markdown-body" id="post-body"><p>本文主要介绍如何在Kubernetes中通过seccomp notify机制来自定义容器的安全机制。</p><a id="more"></a><h2 id="seccomp是什么"><a href="#seccomp是什么" class="headerlink" title="seccomp是什么"></a>seccomp是什么</h2><p><code>seccomp</code>是Linux内核中用于限制应用使用 <strong>系统调用（System Calls）</strong> 的机制，类比于<code>iptables</code>是网络的防火墙，<code>seccomp</code>是系统调用的防火墙。<code>seccomp</code>包括STRICT模式、BPF模式（cBPF，非eBFP）。</p><ul><li><code>STRICT</code>：严格限制系统调用，只允许使用<code>read</code>，<code>wirte</code>，<code>_exit</code>，<code>sigreturn</code>四个系统调用，对于其他的系统调用，会发送<code>SIGKILL</code>型号，使用场景有限。</li><li><code>BPF</code>：当系统调用发生时，<code>seccomp-bpf</code>调用指定的bpf过滤程序，bpf程序通过返回<code>SCMP_ACT_ALLOW</code>,<code>SCMP_ACT_KILL</code>,<code>SCMP_ACT_ERRNO</code>等值，来决定系统调用如何处理。一般是允许或拒绝，也可以向调用者假装返回调用成功的code，但实际上未进行系统调用。<br><code>seccomp-bpf</code>需要静态加载一个bpf程序，一般不需要自己重头编写，而是使用<code>libseccomp</code>进行编写。通过<code>libseccomp</code>，我们只需要编写如下所示的json文件，就能实现<code>seccomp-bpf</code>对系统调用的过滤。<div class="hljs"><pre><code class="hljs json">&#123;
+    <span class="hljs-attr">&quot;defaultAction&quot;</span>: <span class="hljs-string">&quot;SCMP_ACT_ERRNO&quot;</span>,  <span class="hljs-comment">// 默认拒绝，白名单形式</span>
+    <span class="hljs-attr">&quot;syscalls&quot;</span>: [
+        &#123;
+            <span class="hljs-attr">&quot;names&quot;</span>: [                  <span class="hljs-comment">// 允许的系统调用</span>
+                <span class="hljs-string">&quot;accept&quot;</span>,
+                <span class="hljs-string">&quot;chown&quot;</span>,
+                <span class="hljs-string">&quot;kill&quot;</span>,
+                <span class="hljs-string">&quot;mmap&quot;</span>,
+                ...
+            ],
+            <span class="hljs-attr">&quot;action&quot;</span>: <span class="hljs-string">&quot;SCMP_ACT_ALLOW&quot;</span>,
+            <span class="hljs-attr">&quot;args&quot;</span>: [],
+            <span class="hljs-attr">&quot;comment&quot;</span>: <span class="hljs-string">&quot;&quot;</span>,
+            <span class="hljs-attr">&quot;includes&quot;</span>: &#123;&#125;,
+            <span class="hljs-attr">&quot;excludes&quot;</span>: &#123;&#125;
+        &#125;
+    ]
+&#125;</code></pre></div></li></ul><h2 id="seccomp用于容器"><a href="#seccomp用于容器" class="headerlink" title="seccomp用于容器"></a>seccomp用于容器</h2><p>通过seccomp可以限制容器内进程的系统调用，防止恶意攻击。<br>docker可以通过<code>--security-opt seccomp</code>对seccomp进行配置，不配置的情况下使用docker的<a target="_blank" rel="noopener" href="https://github.com/moby/moby/blob/master/profiles/seccomp/default.json">默认的seccomp配置</a>。</p><ul><li>不对容器开启seccomp<div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> docker run --security-opt seccomp=unconfined xxxx</span></code></pre></div></li><li>指定自定义的seccomp策略<div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> docker run --security-opt seccomp=/path/to/seccomp/config.json</span></code></pre></div> 在只使用containerd的环境中，其配置方式与docker是一致的，containerd的<a target="_blank" rel="noopener" href="https://github.com/containerd/containerd/blob/main/contrib/seccomp/seccomp_default.go"><code>default seccomp</code></a> 也基本是与docker是一致的。</li></ul><h3 id="kubernetes中使用seccomp"><a href="#kubernetes中使用seccomp" class="headerlink" title="kubernetes中使用seccomp"></a>kubernetes中使用seccomp</h3><p>在1.19之前的K8S版本中，可以通过添加<code>seccomp.security.alpha.kubernetes.io/pod</code>的Annotation来指定容器的seccomp配置：</p><div class="hljs"><pre><code class="hljs yaml"><span class="hljs-attr">apiVersion:</span> <span class="hljs-string">v1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">Pod</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">some-pod</span>
+  <span class="hljs-attr">labels:</span>
+    <span class="hljs-attr">app:</span> <span class="hljs-string">some-pod</span>
+  <span class="hljs-attr">annotations:</span>
+    <span class="hljs-attr">seccomp.security.alpha.kubernetes.io/pod:</span> <span class="hljs-string">localhost/profiles/some-profile.json</span>
+<span class="hljs-attr">spec:</span></code></pre></div><p>在1.19以后通过<code>pod.spec.securityContext.seccompProfile</code>来指定：</p><div class="hljs"><pre><code class="hljs yaml"><span class="hljs-attr">apiVersion:</span> <span class="hljs-string">v1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">Pod</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">some-pod</span>
+  <span class="hljs-attr">labels:</span>
+    <span class="hljs-attr">app:</span> <span class="hljs-string">some-pod</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">securityContext:</span>
+    <span class="hljs-attr">seccompProfile:</span>
+      <span class="hljs-attr">type:</span> <span class="hljs-string">Localhost</span>
+      <span class="hljs-attr">localhostProfile:</span> <span class="hljs-string">profiles/some-profile.json</span>
+  <span class="hljs-attr">containers:</span></code></pre></div><p>其中<code>type</code>可以设置为:</p><ul><li><code>Localhost</code>：使用指定的seccomp的配置文件。</li><li><code>RuntimeDefault</code>：使用runtime默认的seccomp配置，例如上面的docker、containerd。</li><li><code>Unconfined</code>：关闭seccomp。<br>另外，可以通过开启kubelet的<a target="_blank" rel="noopener" href="https://github.com/kubernetes/enhancements/blob/master/keps/sig-node/2413-seccomp-by-default/README.md">SeccompDefault</a> 特性，来对容器默认配置runtime default seccomp策略。</li></ul><h2 id="seccomp-notify"><a href="#seccomp-notify" class="headerlink" title="seccomp notify"></a>seccomp notify</h2><p>虽然有了seccomp-bpf，但仍有诸多限制。seccomp-bpf整体上仍然是静态加载规则，bpf程序不能解引用指针（dereference pointer），去获取指针指向的内容。比如<code>open(&quot;/tmp/file.log&quot;,O_WRONLY)</code>的系统调用，在<code>seccomp_data</code>的<code>args</code>中可能是<code>[0x55fffff,0x0001]</code>，即<code>open(0x55fffff,0x0001)</code>，而<code>0x55fffff</code>指向的<code>/tmp/file.log</code>并不能获得到。</p><div class="hljs"><pre><code class="hljs c"><span class="hljs-comment">// seccomp_data是bpf程序的输入</span>
+<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">seccomp_data</span> &#123;</span>  
+    <span class="hljs-keyword">int</span> nr;                         <span class="hljs-comment">// system call number</span>
+    __u32 arch;                     <span class="hljs-comment">// AUDIT_ARCH_* in &lt;linux/audit.h&gt;</span>
+    __u64 instruction_pointer;      <span class="hljs-comment">// CPU instruction pointer</span>
+    __u64 args[<span class="hljs-number">6</span>];                  <span class="hljs-comment">// system call arguments</span>
+&#125;;</code></pre></div><p>同时，cBPF也无法像eBPF那样通过BPF maps改变程序的行为。因此，无法实现例如：根据不同的pod、namespace执行不同的seccomp策略；或是阻塞容器的系统调用，直至Kubernetes裁决系统调用可以执行等一些场景。</p><p>seccomp notify可以解决这些问题。在seccomp notify机制下，seccomp会将系统调用的决定权转交给另一个用户态的进程，这个过程是通过seccomp返回对应的seccomp-bpf程序的文件描述符fd来实现的。以系统调用mount为例（kinvolk上的一个例子），具体的流程如下：<br><img src="/img/seccomp-notify-example-syscall-mount.png" srcset="/img/loading.gif"></p><ul><li>程序调用<code>mount()</code>系统调用</li><li><code>seccomp</code>执行bpf程序，收到返回值<code>SCMP_ACT_MOTIFY</code></li><li><code>seccomp agent</code>通过使用<code>SECCOMP_IOCTL_NOTIF_RECV</code>调用<code>ioctl</code>，获取<code>seccomp_notify</code>（结构如图所示）</li><li><code>seccomp agent</code>从程序对应的<code>/proc/pid/mem</code>中读取<code>mount()</code>的参数，并执行mount操作（如果程序运行在容器里，需要进入对应的ns。例子中是执行mount操作，除此外可以根据需要进行审计记录等其他操作）</li><li><code>seccomp agent</code>使用<code>SECCOMP_IOCTL_NOTIF_SEND</code>调用<code>ioctl</code>，返回<code>seccomp_notify_resp</code>（结构如图所示），告诉<code>seccomp</code>返回success。</li><li><code>seccomp</code>返回0给程序</li></ul><p>使用seccomp notify需要：</p><ul><li>Runc &gt;= 1.1.0</li><li>Libseccomp &gt;= 2.5.0 (&gt;= 2.5.2 recommended)</li><li>Linux kernel &gt;= 5.9</li></ul><h3 id="kinvolk-seccomp-agent"><a href="#kinvolk-seccomp-agent" class="headerlink" title="kinvolk seccomp agent"></a>kinvolk seccomp agent</h3><p>随着runc实现<a target="_blank" rel="noopener" href="https://github.com/opencontainers/runc/pull/2682">对seccomp notify的支持</a>，在K8S中使用seccomp notify也成为可能。简单来说，首先为runc运行的container配置bpf程序，用于返回notify；在收到seccomp的notify后，runc主进程调用seccomp agent（提前配置了socket地址），来进行加下来的处理逻辑。seccomp agent可以通过查询kube-apiserver来进一步实现复杂的处理逻辑。在runc中有个测试用的<a target="_blank" rel="noopener" href="https://github.com/opencontainers/runc/blob/main/contrib/cmd/seccompagent/seccompagent.go">seccompagent</a> ，实现了简单的对<code>&quot;chmod&quot;, &quot;fchmod&quot;, &quot;fchmodat&quot;, &quot;mkdir&quot;</code>四个系统调用的，如果自己实现，则可以通过<a target="_blank" rel="noopener" href="https://github.com/kinvolk/seccompagent">kinvolk/seccompagent</a> 实现。</p><p>引用kinvolk社区的一张图，说明K8S+seccomp notify的整个流程。<br><img src="/img/kinvolk-seccompagent-k8s.png" srcset="/img/loading.gif"><br>1）配置pod的<code>seccompProfile</code>，指定配置文件为<code>foo.json</code>。文件中通过<code>SCMP_ACT_NOTIFY</code> 的action设置了哪些系统调用需要使用seccomp notify机制，同时通过<code>listenerPath</code>配置了seccomp agent的调用地址。除此外，还可以通过<code>listenerMetadata</code> 指定传递给seccomp agent的参数。<br>2）pod调度到节点，containerd根据设置的<code>foo.json</code>生成配置调用runc启动容器。<br>3）在pod调用mount后，runc收到seccomp返回的fd，将container process state与fd发送到seccomp agent中，由seccomp agent完成处理逻辑。</p><p>kinvolk/seccompagent代码库的结构：</p><ul><li><code>pkg/agent</code>：agent的实现，启动socket监听，接受OCI hook传递过来的fd。</li><li><code>pkg/handlers</code>：一些基本的系统调用实现，比如<code>mkdir</code>、<code>mount</code>等</li><li><code>pkg/kuberesolver</code>：用于实现基于Kubernetes Pod的自定义handler</li><li><code>pkg/nsenter</code>：用于操作、进入其他namespace</li><li><code>pkg/readarg</code>：用于获取系统调用的参数</li><li><code>pkg/registry</code>：用于注册一组系统调用的handler</li></ul><h4 id="Demo"><a href="#Demo" class="headerlink" title="Demo"></a>Demo</h4><p>在kinvolk/seccompagent中有个<a target="_blank" rel="noopener" href="https://github.com/kinvolk/seccompagent/blob/main/cmd/seccompagent/seccompagent.go">Demo</a>，下面以<code>mkdir</code>的调用演示功能。<br>为了简化demo，对官方的Demo部分代码做了精简：</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> cat demo.go</span>
+package main
+
+import (
+	&quot;fmt&quot;
+	&quot;github.com/kinvolk/seccompagent/pkg/agent&quot;
+	&quot;github.com/kinvolk/seccompagent/pkg/handlers&quot;
+	&quot;github.com/kinvolk/seccompagent/pkg/kuberesolver&quot;
+	&quot;github.com/kinvolk/seccompagent/pkg/nsenter&quot;
+	&quot;github.com/kinvolk/seccompagent/pkg/registry&quot;
+)
+
+func main() &#123;
+	nsenter.Init()
+	kubeResolverFunc := func(pod *kuberesolver.PodContext, metadata map[string]string) *registry.Registry &#123;
+		r := registry.New()
+		r.SyscallHandler[&quot;mkdir&quot;] = handlers.MkdirWithSuffix(fmt.Sprintf(&quot;-%s-%s&quot;, pod.Pod, pod.Namespace)) // 注册mkdir的系统调用handler
+		return r
+	&#125;
+	resolver, err := kuberesolver.KubeResolver(kubeResolverFunc)
+	if err != nil &#123;
+		panic(err)
+	&#125;
+	err = agent.StartAgent(&quot;/run/seccomp-agent.socket&quot;, resolver)
+&#125;
+
+<span class="hljs-meta">$</span><span class="bash"> cat notify.json</span>
+&#123;
+   &quot;architectures&quot; : [
+      &quot;SCMP_ARCH_X86&quot;,
+      &quot;SCMP_ARCH_X32&quot;
+   ],
+   &quot;defaultAction&quot; : &quot;SCMP_ACT_ALLOW&quot;,
+   &quot;listenerPath&quot;: &quot;/run/seccomp-agent.socket&quot;,
+   &quot;syscalls&quot; : [
+      &#123;
+         &quot;action&quot; : &quot;SCMP_ACT_NOTIFY&quot;,
+         &quot;names&quot; : [
+            &quot;mkdir&quot;
+         ]
+      &#125;
+   ]
+&#125;</code></pre></div><p>用<a target="_blank" rel="noopener" href="https://github.com/kinvolk/seccompagent/blob/main/Dockerfile">Dockerfile</a>创建镜像，部署<a target="_blank" rel="noopener" href="https://github.com/kinvolk/seccompagent/blob/main/deploy/seccompagent.yaml">seccomp agent</a> 与测试用的busybox，将<code>notify.json</code>拷贝到 <code>/var/lib/kubelet/seccomp/notify.json</code>：</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> cat busybox.yaml</span>
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: busybox-deploy
+  namespace: test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: busybox-deploy
+  template:
+    metadata:
+      labels:
+        app: busybox-deploy
+    spec:
+      securityContext:
+        seccompProfile:
+          type: Localhost
+          localhostProfile: notify.json #相对于/var/lib/kubelet/seccomp的文件路径
+      tolerations:
+        - key: &quot;node-role.kubernetes.io/master&quot;
+          operator: Exists
+      containers:
+        - image: busybox
+          command: [&quot;sleep&quot;,&quot;3600&quot;]
+          imagePullPolicy: IfNotPresent
+          name: busybox
+<span class="hljs-meta">$</span><span class="bash"> ls /var/lib/kubelet/seccomp/notify.json</span>
+/var/lib/kubelet/seccomp/notify.json
+<span class="hljs-meta">$</span><span class="bash"> kubectl get po -n seccomp-agent -o wide</span>
+NAME                  READY   STATUS    RESTARTS   AGE     IP            NODE       NOMINATED NODE   READINESS GATES
+seccomp-agent-7z2bl   1/1     Running   0          2m31s   10.222.0.20   maao-dev   &lt;none&gt;           &lt;none&gt;
+<span class="hljs-meta">$</span><span class="bash"> kubectl get po -n <span class="hljs-built_in">test</span> -o wide</span>
+NAME                              READY   STATUS    RESTARTS   AGE   IP            NODE       NOMINATED NODE   READINESS GATES
+busybox-deploy-697468b5dd-dxr7q   1/1     Running   0          2m    10.222.0.21   maao-dev   &lt;none&gt;           &lt;none&gt;</code></pre></div><p>在busybox里调用<code>mkdir</code>，会由seccomp agent创建带有相应后缀的文件夹：</p><div class="hljs"><pre><code class="hljs shell"><span class="hljs-meta">$</span><span class="bash"> kubectl <span class="hljs-built_in">exec</span> -it busybox-deploy-697468b5dd-dxr7q -n <span class="hljs-built_in">test</span> sh</span>
+kubectl exec [POD] [COMMAND] is DEPRECATED and will be removed in a future version. Use kubectl exec [POD] -- [COMMAND] instead.
+/ # ls
+bin   dev   etc   home  proc  root  sys   tmp   usr   var
+/ # mkdir a
+/ # ls
+a-busybox-deploy-697468b5dd-dxr7q-test  etc                                     root                                    usr
+bin                                     home                                    sys                                     var
+dev                                     proc                                    tmp</code></pre></div><h2 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h2><p><a target="_blank" rel="noopener" href="https://kinvolk.io/blog/2022/03/bringing-seccomp-notify-to-runc-and-kubernetes/">Bringing Seccomp Notify to Runc and Kubernetes</a>（主要介绍Seccomp Notify在Kubernetes里的实践，里面有链接很多相关的博文）<br><a target="_blank" rel="noopener" href="https://people.kernel.org/brauner/the-seccomp-notifier-new-frontiers-in-unprivileged-container-development">Seccomp Notify – New Frontiers in Unprivileged Container Development</a>（很全面的一篇文章，从seccomp介绍到seccomp notify）<br><a target="_blank" rel="noopener" href="https://itnext.io/hardening-docker-and-kubernetes-with-seccomp-a88b1b4e2111">Hardening Docker and Kubernetes with <code>seccomp</code></a>（主要介绍Kubernetes中原生的seccomp使用）<br><a target="_blank" rel="noopener" href="https://archive.fosdem.org/2021/schedule/event/containers_k8s_seccomp_notify/">Seccomp Notify on Kubernetes</a> FOSDEM 2021的一个分享</p></div><hr><div><div class="post-metas mb-3"><div class="post-meta"><i class="iconfont icon-tags"></i> <a class="hover-with-bg" href="/tags/seccomp/">seccomp</a></div></div><p class="note note-warning">转载请注明出处</p><div class="post-prevnext row"><article class="post-prev col-6"></article><article class="post-next col-6"> <a href="/2022/08/09/Cilium%E6%B5%81%E9%87%8F%E5%88%86%E6%9E%90-%E4%B8%80/"><span class="hidden-mobile">Cilium流量分析(一)</span> <span class="visible-mobile">下一篇</span><i class="iconfont icon-arrowright"></i></a></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
+  (function () {
+    // 查询存储的记录
+    function getRecord(Counter, target) {
+      return new Promise(function (resolve, reject) {
+        Counter('get', '/classes/Counter?where=' + encodeURIComponent(JSON.stringify({target})))
+          .then(resp => resp.json())
+          .then(({results, code, error}) => {
+            if (code === 401) {
+              throw error;
+            }
+            if (results && results.length > 0) {
+              var record = results[0];
+              resolve(record);
+            } else {
+              Counter('post', '/classes/Counter', {target, time: 0})
+                .then(resp => resp.json())
+                .then((record, error) => {
+                  if (error) {
+                    throw error;
+                  }
+                  resolve(record);
+                }).catch(error => {
+                console.error('Failed to create', error);
+                reject(error);
+              });
+            }
+          }).catch((error) => {
+          console.error('LeanCloud Counter Error:', error);
+          reject(error);
+        });
+      })
+    }
+
+    // 发起自增请求
+    function increment(Counter, incrArr) {
+      return new Promise(function (resolve, reject) {
+        Counter('post', '/batch', {
+          "requests": incrArr
+        }).then((res) => {
+          res = res.json();
+          if (res.error) {
+            throw res.error;
+          }
+          resolve(res);
+        }).catch((error) => {
+          console.error('Failed to save visitor count', error);
+          reject(error);
+        });
+      });
+    }
+
+    // 构建自增请求体
+    function buildIncrement(objectId) {
+      return {
+        "method": "PUT",
+        "path": `/1.1/classes/Counter/${ objectId }`,
+        "body": {
+          "time": {
+            '__op': 'Increment',
+            'amount': 1
+          }
+        }
+      }
+    }
+
+    // 校验是否为有效的 UV
+    function validUV() {
+      var key = 'LeanCloud_UV_Flag';
+      var flag = localStorage.getItem(key);
+      if (flag) {
+        // 距离标记小于 24 小时则不计为 UV
+        if (new Date().getTime() - parseInt(flag) <= 86400000) {
+          return false;
+        }
+      }
+      localStorage.setItem(key, new Date().getTime().toString());
+      return true;
+    }
+
+    function addCount(Counter) {
+      var enableIncr = 'true' === 'true' && window.location.hostname !== 'localhost';
+      var getterArr = [];
+      var incrArr = [];
+
+      // 请求 PV 并自增
+      var pvCtn = document.querySelector('#leancloud-site-pv-container');
+      if (pvCtn || enableIncr) {
+        var pvGetter = getRecord(Counter, 'site-pv').then((record) => {
+          incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-pv');
+          if (ele) {
+            ele.innerText = record.time + 1;
+            if (pvCtn) {
+              pvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(pvGetter);
+      }
+
+      // 请求 UV 并自增
+      var uvCtn = document.querySelector('#leancloud-site-uv-container');
+      if (uvCtn || enableIncr) {
+        var uvGetter = getRecord(Counter, 'site-uv').then((record) => {
+          var vuv = validUV();
+          vuv && incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-uv');
+          if (ele) {
+            ele.innerText = record.time + (vuv ? 1 : 0);
+            if (uvCtn) {
+              uvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(uvGetter);
+      }
+
+      // 如果是文章，请求文章的浏览数，并自增
+      if ('true' === 'true') {
+        var viewCtn = document.querySelector('#leancloud-post-views-container');
+        if (viewCtn || enableIncr) {
+          var target = decodeURI('/2022/08/22/%E8%87%AA%E5%AE%9A%E4%B9%89%E5%AE%B9%E5%99%A8%E5%AE%89%E5%85%A8%EF%BC%9A%E5%9C%A8Kubernete%E4%B8%AD%E4%BD%BF%E7%94%A8seccomp-notify/');
+          var viewGetter = getRecord(Counter, target).then((record) => {
+            incrArr.push(buildIncrement(record.objectId))
+            if (viewCtn) {
+              var ele = document.querySelector('#leancloud-post-views');
+              if (ele) {
+                ele.innerText = (record.time || 0) + 1;
+                viewCtn.style.display = 'inline';
+              }
+            }
+          });
+          getterArr.push(viewGetter);
+        }
+      }
+
+      // 如果启动计数自增，批量发起自增请求
+      if (enableIncr) {
+        Promise.all(getterArr).then(() => {
+          incrArr.length > 0 && increment(Counter, incrArr);
+        })
+      }
+    }
+
+    var app_id = 'rGBkjlpYFYPq3Mztf0uHkwm2-gzGzoHsz'
+    var app_key = 'IwuJ6qbGLXA8pB3qeHHjuDT3'
+    var server_url = 'https://rgbkjlpy.lc-cn-n1-shared.com'
+
+    function fetchData(api_server) {
+      var Counter = (method, url, data) => {
+        return fetch(`${ api_server }/1.1${ url }`, {
+          method,
+          headers: {
+            'X-LC-Id': app_id,
+            'X-LC-Key': app_key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data)
+        });
+      };
+
+      addCount(Counter);
+    }
+
+    var api_server = app_id.slice(-9) !== '-MdYXbMMI' ? server_url : `https://${ app_id.slice(0, 8).toLowerCase() }.api.lncldglobal.com`;
+
+    if (api_server) {
+      fetchData(api_server);
+    } else {
+      fetch('https://app-router.leancloud.cn/2/route?appId=' + app_id)
+        .then(resp => resp.json())
+        .then(({api_server}) => {
+          fetchData('https://' + api_server);
+        });
+    }
+  })();
+</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>
