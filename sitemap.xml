@@ -81,6 +81,20 @@
 
   
   <url>
+    <loc>https://maao.cloud/tags/BPF/</loc>
+    <lastmod>2022-08-22</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maao.cloud/tags/Cilium/</loc>
+    <lastmod>2022-08-22</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
     <loc>https://maao.cloud/tags/kube-proxy/</loc>
     <lastmod>2022-08-22</lastmod>
     <changefreq>daily</changefreq>
@@ -109,7 +123,7 @@
   </url>
   
   <url>
-    <loc>https://maao.cloud/tags/seccomp/</loc>
+    <loc>https://maao.cloud/tags/metalLB/</loc>
     <lastmod>2022-08-22</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
@@ -123,21 +137,7 @@
   </url>
   
   <url>
-    <loc>https://maao.cloud/tags/metalLB/</loc>
-    <lastmod>2022-08-22</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
-    <loc>https://maao.cloud/tags/BPF/</loc>
-    <lastmod>2022-08-22</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
-    <loc>https://maao.cloud/tags/Cilium/</loc>
+    <loc>https://maao.cloud/tags/seccomp/</loc>
     <lastmod>2022-08-22</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
