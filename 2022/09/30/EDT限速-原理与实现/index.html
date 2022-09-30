@@ -1,0 +1,456 @@
+<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>EDT限速: 原理与实现 - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">EDT限速: 原理与实现</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2022-09-30 11:14" pubdate>2022年9月30日 上午</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 1.9k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 31 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">EDT限速: 原理与实现</h1><div class="markdown-body" id="post-body"><p>Kubernetes中，可以通过设置Pod的Annotation <code>kubernetes.io/ingress-bandwidth</code>与<code>kubernetes.io/egress-bandwidth</code>对容器进行带宽限制，bandwidth CNI在容器veth pair的host端设置tc tbf（Token Bucket Filter，令牌桶过滤器）实现限速功能。<a target="_blank" rel="noopener" href="https://cilium.io/blog/2020/11/10/cilium-19/#bwmanager">Cilium通过EDT</a>(Earliest Departure Time)替代令牌桶算法进行限速，在延迟与CPU使用率上都有更好表现。</p><a id="more"></a><h2 id="EDT原理"><a href="#EDT原理" class="headerlink" title="EDT原理"></a>EDT原理</h2><p>EDT通过确保数据包不早于某个时间点发送，来控制带宽，而这个时间点是通过上一个数据包的发送时间加上一个延迟来确定的。数据包延迟的计算公式如下所示。</p><div class="hljs"><pre><code class="hljs xl"><span class="hljs-function"><span class="hljs-title">delay_ns</span> = skb-&gt;</span><span class="hljs-function"><span class="hljs-title">len</span> * NS_PER_SEC / aggregate_state-&gt;</span>rate_limit_bps</code></pre></div><p>例如，对容器限速10Kbit/s，那容器发送1Kbit大小的包，需要在上一个包发送0.1s之后。似乎可以理解为另一种形式的令牌桶，只不过数据包发送的“成本”由令牌变成了时间片。</p><p>引用google分享的<a target="_blank" rel="noopener" href="https://legacy.netdevconf.info/0x14/pub/papers/55/0x14-paper55-talk-paper.pdf">Replacing HTB with EDT and BPF</a> 中的描述，EDT限速流程如下图所示：数据包在进入MQ队列之前，被设置<code>skb-&gt;tstamp</code>；在FQ队列中，确保数据包不会早于<code>skb-&gt;tstamp</code>设置的时间被发出。<br><img src="/img/edt_1.png" srcset="/img/loading.gif"></p><ul><li><p>MQ：引用相关Patch里的介绍如下。是个多队列的框架，使用hash函数将流量分配到下面的多个队列。</p><blockquote><p>The <code>mq</code> qdisc is a dummy qdisc which sets up an array of <code>pfifo_fast</code> queues as a Traffic Control <code>tc class</code> under the root <code>mq qdisc</code>. One <code>pfifo_fast</code> queue is created for each hardware queue.</p><p>Traffic is placed into each queue using a hash function. This should allow traffic to spread across the multiple queues.</p></blockquote></li><li><p>FQ：公平队列，在被修改为<a target="_blank" rel="noopener" href="https://lore.kernel.org/netdev/20180921155154.49489-1-edumazet@google.com/">EDT mode</a> 后，能确保队列中的数据包不会早于<code>skb-&gt;tstamp</code>设置的时间被发出。引用<a target="_blank" rel="noopener" href="https://legacy.netdevconf.info/0x12/session.html?evolving-from-afap-teaching-nics-about-time">Evolving from AFAP: Teaching NICs about time</a> 分享里的一个图，其核心结构是一个timestamp的优先循环队列。<br><img src="/img/edt_3.png" srcset="/img/loading.gif"></p></li></ul><h2 id="Cilium中的实现"><a href="#Cilium中的实现" class="headerlink" title="Cilium中的实现"></a>Cilium中的实现</h2><p>Cilium使用EDT实现了<a target="_blank" rel="noopener" href="https://github.com/cilium/cilium/commit/29f46540359d175690e9e9974eeeff970b0f38e0">Bandwidth Manager</a> ，具体实现如下：</p><p>Cilium Daemon启动时需要判断内核是否能支持EDT</p><div class="hljs"><pre><code class="hljs go">pkg/bandwidth/bandwidth.<span class="hljs-keyword">go</span>
+
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">ProbeBandwidthManager</span><span class="hljs-params">()</span></span> &#123;
+	<span class="hljs-keyword">if</span> h := probes.NewProbeManager().GetHelpers(<span class="hljs-string">&quot;sched_cls&quot;</span>) ...
+	<span class="hljs-keyword">if</span> _, err := sysctl.Read(<span class="hljs-string">&quot;net.core.default_qdisc&quot;</span>) ...
+&#125;</code></pre></div><p>接着配置系统参数，修改主机网卡队列类型</p><div class="hljs"><pre><code class="hljs go">pkg/bandwidth/bandwidth.<span class="hljs-keyword">go</span>
+
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">InitBandwidthManager</span><span class="hljs-params">()</span></span> &#123;
+    <span class="hljs-comment">// 先设置一些系统参数，包括将默认的队列设置为`fq`，将拥塞算法设置为BBR。</span>
+	...
+	congctl := <span class="hljs-string">&quot;cubic&quot;</span>
+	<span class="hljs-keyword">if</span> option.Config.EnableBBR &#123;
+		congctl = <span class="hljs-string">&quot;bbr&quot;</span>
+	&#125;
+	...
+	baseSettings := []setting&#123;
+		&#123;<span class="hljs-string">&quot;net.core.netdev_max_backlog&quot;</span>, <span class="hljs-string">&quot;1000&quot;</span>&#125;,
+		&#123;<span class="hljs-string">&quot;net.core.somaxconn&quot;</span>, <span class="hljs-string">&quot;4096&quot;</span>&#125;,
+		&#123;<span class="hljs-string">&quot;net.core.default_qdisc&quot;</span>, <span class="hljs-string">&quot;fq&quot;</span>&#125;,
+		&#123;<span class="hljs-string">&quot;net.ipv4.tcp_max_syn_backlog&quot;</span>, <span class="hljs-string">&quot;4096&quot;</span>&#125;,
+		&#123;<span class="hljs-string">&quot;net.ipv4.tcp_congestion_control&quot;</span>, congctl&#125;,
+	&#125;
+	...
+	<span class="hljs-comment">// 再为cilium使用的宿主机网卡设备添加mq qdisc,子队列会自动创建FQ；如果不支持mq,则直接创建FQ</span>
+	<span class="hljs-keyword">for</span> _, device := <span class="hljs-keyword">range</span> option.Config.GetDevices() &#123;
+		...
+		qdisc = &amp;netlink.GenericQdisc&#123;
+			QdiscAttrs: netlink.QdiscAttrs&#123;
+				LinkIndex: link.Attrs().Index,
+				Parent:    netlink.HANDLE_ROOT,
+			&#125;,
+			QdiscType: <span class="hljs-string">&quot;mq&quot;</span>,
+		&#125;
+		which := <span class="hljs-string">&quot;mq with fq leafs&quot;</span>
+		<span class="hljs-keyword">if</span> err := netlink.QdiscReplace(qdisc); err != <span class="hljs-literal">nil</span> &#123;
+			<span class="hljs-comment">// No MQ support, so just replace to FQ directly.</span>
+			fq := &amp;netlink.Fq&#123;
+				QdiscAttrs: netlink.QdiscAttrs&#123;
+					LinkIndex: link.Attrs().Index,
+					Parent:    netlink.HANDLE_ROOT,
+				&#125;,
+				Pacing: <span class="hljs-number">1</span>,
+			&#125;
+			...
+			which = <span class="hljs-string">&quot;fq&quot;</span>
+		&#125;
+		log.WithField(<span class="hljs-string">&quot;device&quot;</span>, device).Infof(<span class="hljs-string">&quot;Setting qdisc to %s&quot;</span>, which)
+	&#125;
+&#125;
+</code></pre></div><p>数据包经过容器tc bpf程序，设置聚合</p><div class="hljs"><pre><code class="hljs c">bpf/bpf_lxc.c
+
+<span class="hljs-comment">// 加载在每个容器的veth pair的tc层，设置aggregate。对mq来说，能将容器所有的包都聚合到一个fq子队列，防止数据包的乱序发送</span>
+__section(<span class="hljs-string">&quot;from-container&quot;</span>)
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">handle_xgress</span><span class="hljs-params">(struct __ctx_buff *ctx)</span></span>
+<span class="hljs-function"></span>&#123;
+	...
+	edt_set_aggregate(ctx, LXC_ID);
+	...
+&#125;</code></pre></div><p>数据包到宿主机网卡准备发出时，经宿主机的bpf程序重新设置发送时间tstamp，接下来就由内核的fq队列进行发送。</p><div class="hljs"><pre><code class="hljs c">bpf/bpf_host.c
+
+__section(<span class="hljs-string">&quot;to-netdev&quot;</span>)
+<span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">to_netdev</span><span class="hljs-params">(struct __ctx_buff *ctx __maybe_unused)</span></span>
+<span class="hljs-function"></span>&#123;
+	...
+	<span class="hljs-meta">#<span class="hljs-meta-keyword">if</span> defined(ENABLE_BANDWIDTH_MANAGER)</span>
+	ret = edt_sched_departure(ctx);
+	<span class="hljs-comment">/* No send_drop_notify_error() here given we&#x27;re rate-limiting. */</span>
+	<span class="hljs-keyword">if</span> (ret == CTX_ACT_DROP) &#123;
+		update_metrics(ctx_full_len(ctx), METRIC_EGRESS,
+			       -DROP_EDT_HORIZON);
+		<span class="hljs-keyword">return</span> ret;
+	&#125;
+	<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+	...
+&#125;
+
+bpf/lib/edt.h
+
+<span class="hljs-function"><span class="hljs-keyword">static</span> __always_inline <span class="hljs-keyword">int</span> <span class="hljs-title">edt_sched_departure</span><span class="hljs-params">(struct __ctx_buff *ctx)</span></span>
+<span class="hljs-function"></span>&#123;
+	<span class="hljs-comment">// aggregate记录在ctx-&gt;queue_mapping</span>
+	aggregate.id = edt_get_aggregate(ctx);
+	<span class="hljs-keyword">if</span> (!aggregate.id)
+		<span class="hljs-keyword">return</span> CTX_ACT_OK;
+
+	info = map_lookup_elem(&amp;THROTTLE_MAP, &amp;aggregate);
+	
+	now = ktime_get_ns();
+	t = ctx-&gt;tstamp;
+	<span class="hljs-keyword">if</span> (t &lt; now)
+		t = now;
+    <span class="hljs-comment">// 计算当前数据包的延迟（发送成本）</span>
+	delay = ((__u64)ctx_wire_len(ctx)) * NSEC_PER_SEC / info-&gt;bps;
+	<span class="hljs-comment">// info-&gt;t_last 记录了上一个数据包的最早发送时间，t_next是当前数据包的最早发送时间</span>
+	t_next = READ_ONCE(info-&gt;t_last) + delay;
+	<span class="hljs-keyword">if</span> (t_next &lt;= t) &#123;
+		<span class="hljs-comment">// 数据包的最早发送时间早于当前，可以直接发送</span>
+		WRITE_ONCE(info-&gt;t_last, t);
+		<span class="hljs-keyword">return</span> CTX_ACT_OK;
+	&#125;
+	<span class="hljs-comment">// 防止发送时间较远的数据包长时间填充fq，see also 39d010504e6b (&quot;net_sched:* sch_fq: add horizon attribute&quot;)</span>
+	<span class="hljs-keyword">if</span> (t_next - now &gt;= info-&gt;t_horizon_drop)
+		<span class="hljs-keyword">return</span> CTX_ACT_DROP;
+	WRITE_ONCE(info-&gt;t_last, t_next);
+	<span class="hljs-comment">// 设置最早发送时间</span>
+	ctx-&gt;tstamp = t_next;
+	<span class="hljs-keyword">return</span> CTX_ACT_OK;
+&#125;</code></pre></div><h2 id="实验"><a href="#实验" class="headerlink" title="实验"></a>实验</h2><p>代码<code>edt.c</code>：</p><div class="hljs"><pre><code class="hljs c"><span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;linux/types.h&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;bpf/bpf_helpers.h&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;linux/bpf.h&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;linux/if_ether.h&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;linux/pkt_cls.h&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;linux/swab.h&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;stdint.h&gt;</span></span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">include</span> <span class="hljs-meta-string">&lt;linux/ip.h&gt;</span></span>
+
+<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">bpf_elf_map</span></span>
+<span class="hljs-class">&#123;</span>
+        __u32 type;
+        __u32 size_key;
+        __u32 size_value;
+        __u32 max_elem;
+        __u32 flags;
+        __u32 id;
+        __u32 pinning;
+        __u32 inner_id;
+        __u32 inner_idx;
+&#125;;
+
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> NS_PER_SEC 1000000000ULL</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> PIN_GLOBAL_NS 2</span>
+
+<span class="hljs-meta">#<span class="hljs-meta-keyword">ifndef</span> __section</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> __section(NAME) \</span>
+        __attribute__((section(NAME), used))
+<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+
+<span class="hljs-meta">#<span class="hljs-meta-keyword">ifndef</span> __READ_ONCE</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> __READ_ONCE(X) (*(volatile typeof(X) *)&amp;X)</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+
+<span class="hljs-meta">#<span class="hljs-meta-keyword">ifndef</span> __WRITE_ONCE</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> __WRITE_ONCE(X, V) (*(volatile typeof(X) *)&amp;X) = (V)</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+
+<span class="hljs-comment">/* &#123;READ,WRITE&#125;_ONCE() with verifier workaround via bpf_barrier(). */</span>
+
+<span class="hljs-meta">#<span class="hljs-meta-keyword">ifndef</span> READ_ONCE</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> READ_ONCE(X) \</span>
+        (&#123; typeof(X) __val = __READ_ONCE(X);	\
+			   bpf_barrier();			\
+			   __val; &#125;)
+<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+
+<span class="hljs-meta">#<span class="hljs-meta-keyword">ifndef</span> WRITE_ONCE</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> WRITE_ONCE(X, V) \</span>
+        (&#123; typeof(X) __val = (V);	\
+				   __WRITE_ONCE(X, __val);	\
+				   bpf_barrier();		\
+				   __val; &#125;)
+<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+
+<span class="hljs-meta">#<span class="hljs-meta-keyword">ifndef</span> barrier</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">define</span> barrier() asm volatile(<span class="hljs-meta-string">&quot;&quot;</span> \</span>
+                               :  \
+                               :  \
+                               : <span class="hljs-string">&quot;memory&quot;</span>)
+<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+
+<span class="hljs-function"><span class="hljs-keyword">static</span> __always_inline <span class="hljs-keyword">void</span> <span class="hljs-title">bpf_barrier</span><span class="hljs-params">(<span class="hljs-keyword">void</span>)</span></span>
+<span class="hljs-function"></span>&#123;
+        <span class="hljs-comment">/* Workaround to avoid verifier complaint:</span>
+<span class="hljs-comment">         * &quot;dereference of modified ctx ptr R5 off=48+0, ctx+const is allowed,</span>
+<span class="hljs-comment">         *        ctx+const+const is not&quot;</span>
+<span class="hljs-comment">         */</span>
+        barrier();
+&#125;
+
+<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">bpf_elf_map</span> __<span class="hljs-title">section</span>(&quot;<span class="hljs-title">maps</span>&quot;) <span class="hljs-title">rate_map</span> = &#123;</span>
+    .type = BPF_MAP_TYPE_HASH,
+    .size_key = <span class="hljs-keyword">sizeof</span>(__u32),
+    .size_value = <span class="hljs-keyword">sizeof</span>(__u64),
+    .pinning = PIN_GLOBAL_NS,
+    .max_elem = <span class="hljs-number">16</span>,
+&#125;;
+
+<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">bpf_elf_map</span> __<span class="hljs-title">section</span>(&quot;<span class="hljs-title">maps</span>&quot;) <span class="hljs-title">tstamp_map</span> = &#123;</span>
+    .type = BPF_MAP_TYPE_HASH,
+    .size_key = <span class="hljs-keyword">sizeof</span>(__u32),
+    .size_value = <span class="hljs-keyword">sizeof</span>(__u64),
+    .max_elem = <span class="hljs-number">16</span>,
+&#125;;
+
+__section(<span class="hljs-string">&quot;tc/edt&quot;</span>) <span class="hljs-function"><span class="hljs-keyword">int</span> <span class="hljs-title">edt</span><span class="hljs-params">(struct __sk_buff *skb)</span></span>
+<span class="hljs-function"></span>&#123;
+        <span class="hljs-keyword">void</span> *data_end = (<span class="hljs-keyword">void</span> *)(<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">long</span>)skb-&gt;data_end;
+        __u64 *rate, *tstamp, delay_ns, now, t, t_next;
+        <span class="hljs-keyword">void</span> *data = (<span class="hljs-keyword">void</span> *)(<span class="hljs-keyword">unsigned</span> <span class="hljs-keyword">long</span>)skb-&gt;data;
+        <span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">iphdr</span> *<span class="hljs-title">ip</span> = <span class="hljs-title">data</span> + <span class="hljs-title">sizeof</span>(<span class="hljs-title">struct</span> <span class="hljs-title">ethhdr</span>);</span>
+        <span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">ethhdr</span> *<span class="hljs-title">eth</span> = <span class="hljs-title">data</span>;</span>
+
+        <span class="hljs-keyword">if</span> (data + <span class="hljs-keyword">sizeof</span>(struct ethhdr) &gt; data_end)
+                <span class="hljs-keyword">return</span> TC_ACT_OK;
+        <span class="hljs-keyword">if</span> (eth-&gt;h_proto != ___constant_swab16(ETH_P_IP) &amp;&amp;
+            eth-&gt;h_proto != ___constant_swab16(ETH_P_IPV6))
+                <span class="hljs-keyword">return</span> TC_ACT_OK;
+        <span class="hljs-keyword">if</span> (data + <span class="hljs-keyword">sizeof</span>(struct ethhdr) + <span class="hljs-keyword">sizeof</span>(struct iphdr) &gt; data_end)
+                <span class="hljs-keyword">return</span> TC_ACT_OK;
+        rate = bpf_map_lookup_elem(&amp;rate_map, &amp;ip-&gt;daddr);
+        <span class="hljs-keyword">if</span> (!rate)
+        &#123;
+                <span class="hljs-keyword">return</span> TC_ACT_OK;
+        &#125;
+
+        now = bpf_ktime_get_ns();
+        t = skb-&gt;tstamp;
+        <span class="hljs-keyword">if</span> (t &lt; now)
+                t = now;
+        delay_ns = skb-&gt;len * NS_PER_SEC / (*rate);
+        tstamp = bpf_map_lookup_elem(&amp;tstamp_map, &amp;ip-&gt;daddr);
+        <span class="hljs-keyword">if</span> (!tstamp)
+        &#123;
+                bpf_map_update_elem(&amp;tstamp_map, &amp;ip-&gt;daddr, &amp;t, BPF_ANY);
+                <span class="hljs-keyword">return</span> TC_ACT_OK;
+        &#125;
+        t_next = READ_ONCE(*tstamp) + delay_ns;
+        <span class="hljs-keyword">if</span> (t_next &lt;= t)
+        &#123;
+                WRITE_ONCE(*tstamp, t);
+                <span class="hljs-keyword">return</span> TC_ACT_OK;
+        &#125;
+        WRITE_ONCE(*tstamp, t_next);
+        skb-&gt;tstamp = t_next;
+        <span class="hljs-keyword">return</span> TC_ACT_OK;
+&#125;
+
+<span class="hljs-keyword">char</span> __license[] __section(<span class="hljs-string">&quot;license&quot;</span>) = <span class="hljs-string">&quot;GPL&quot;</span>;</code></pre></div><p>在ubuntu上测试，<code>eno1</code>为主机网卡。执行如下命令：</p><div class="hljs"><pre><code class="hljs shell">// 创建qdisc，由于我的网卡不支持多队列，跳过mq，直接创建fq
+<span class="hljs-meta">$</span><span class="bash"> tc qdisc add dev eno1 root handle 1: fq</span>
+
+// 编译bpf，加载到egress
+<span class="hljs-meta">$</span><span class="bash"> clang -O2 -Wall -target bpf -c  edt.c -o  edt.o</span>
+<span class="hljs-meta">$</span><span class="bash"> tc qdisc add dev eno1 clsact</span>
+<span class="hljs-meta">$</span><span class="bash"> tc filter add dev eno1 egress bpf direct-action obj edt.o sec tc/edt</span>
+<span class="hljs-meta">$</span><span class="bash"> bpftool net show</span>
+
+// 更新rate_map，限制目的地为192.168.2.1(c0a80201)的流量最大为10Mbits/s（value需要转换为byte，即1250000）
+<span class="hljs-meta">$</span><span class="bash"> bpftool map update pinned /sys/fs/bpf/tc/globals/rate_map key 0xC0 0xA8 0x02 0x01 value 0xd0 0x12 0x13 0 0 0 0 0</span>
+
+// iperf测试
+<span class="hljs-meta">$</span><span class="bash"> iperf3 -c 192.168.2.1</span>
+Connecting to host 192.168.2.1, port 5201
+[  5] local 192.168.2.2 port 28180 connected to 192.168.2.1 port 5201
+[ ID] Interval           Transfer     Bitrate         Retr  Cwnd
+[  5]   0.00-1.00   sec  1.38 MBytes  11.6 Mbits/sec    0   33.9 KBytes
+[  5]   1.00-2.00   sec  1.12 MBytes  9.38 Mbits/sec    0   33.9 KBytes
+[  5]   2.00-3.00   sec  1.24 MBytes  10.4 Mbits/sec    0   33.9 KBytes
+[  5]   3.00-4.00   sec  1.12 MBytes  9.38 Mbits/sec    0   33.9 KBytes
+
+// 限制20Mbits/s
+<span class="hljs-meta">$</span><span class="bash"> bpftool map update pinned /sys/fs/bpf/tc/globals/rate_map key 0xC0 0xA8 0x02 0x01 value 0xA0 0x25 0x26 0 0 0 0 0</span>
+<span class="hljs-meta">$</span><span class="bash"> iperf3 -c 192.168.2.1</span>
+Connecting to host 192.168.2.1, port 5201
+[  5] local 192.168.2.2 port 28184 connected to 192.168.2.1 port 5201
+[ ID] Interval           Transfer     Bitrate         Retr  Cwnd
+[  5]   0.00-1.00   sec  2.50 MBytes  21.0 Mbits/sec    0   33.9 KBytes
+[  5]   1.00-2.00   sec  2.36 MBytes  19.8 Mbits/sec    0   33.9 KBytes
+[  5]   2.00-3.00   sec  2.49 MBytes  20.9 Mbits/sec    0   42.4 KBytes</code></pre></div><h2 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h2><p><a target="_blank" rel="noopener" href="https://blog.csdn.net/ByteDanceTech/article/details/120878281">https://blog.csdn.net/ByteDanceTech/article/details/120878281</a><br><a target="_blank" rel="noopener" href="https://www.51cto.com/article/685201.html">https://www.51cto.com/article/685201.html</a></p></div><hr><div><div class="post-metas mb-3"><div class="post-meta"><i class="iconfont icon-tags"></i> <a class="hover-with-bg" href="/tags/BPF/">BPF</a> <a class="hover-with-bg" href="/tags/cilium/">cilium</a></div></div><p class="note note-warning">转载请注明出处</p><div class="post-prevnext row"><article class="post-prev col-6"></article><article class="post-next col-6"> <a href="/2022/08/22/%E8%87%AA%E5%AE%9A%E4%B9%89%E5%AE%B9%E5%99%A8%E5%AE%89%E5%85%A8%EF%BC%9A%E5%9C%A8Kubernete%E4%B8%AD%E4%BD%BF%E7%94%A8seccomp-notify/"><span class="hidden-mobile">自定义容器安全：在Kubernete中使用seccomp notify</span> <span class="visible-mobile">下一篇</span><i class="iconfont icon-arrowright"></i></a></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
+  (function () {
+    // 查询存储的记录
+    function getRecord(Counter, target) {
+      return new Promise(function (resolve, reject) {
+        Counter('get', '/classes/Counter?where=' + encodeURIComponent(JSON.stringify({target})))
+          .then(resp => resp.json())
+          .then(({results, code, error}) => {
+            if (code === 401) {
+              throw error;
+            }
+            if (results && results.length > 0) {
+              var record = results[0];
+              resolve(record);
+            } else {
+              Counter('post', '/classes/Counter', {target, time: 0})
+                .then(resp => resp.json())
+                .then((record, error) => {
+                  if (error) {
+                    throw error;
+                  }
+                  resolve(record);
+                }).catch(error => {
+                console.error('Failed to create', error);
+                reject(error);
+              });
+            }
+          }).catch((error) => {
+          console.error('LeanCloud Counter Error:', error);
+          reject(error);
+        });
+      })
+    }
+
+    // 发起自增请求
+    function increment(Counter, incrArr) {
+      return new Promise(function (resolve, reject) {
+        Counter('post', '/batch', {
+          "requests": incrArr
+        }).then((res) => {
+          res = res.json();
+          if (res.error) {
+            throw res.error;
+          }
+          resolve(res);
+        }).catch((error) => {
+          console.error('Failed to save visitor count', error);
+          reject(error);
+        });
+      });
+    }
+
+    // 构建自增请求体
+    function buildIncrement(objectId) {
+      return {
+        "method": "PUT",
+        "path": `/1.1/classes/Counter/${ objectId }`,
+        "body": {
+          "time": {
+            '__op': 'Increment',
+            'amount': 1
+          }
+        }
+      }
+    }
+
+    // 校验是否为有效的 UV
+    function validUV() {
+      var key = 'LeanCloud_UV_Flag';
+      var flag = localStorage.getItem(key);
+      if (flag) {
+        // 距离标记小于 24 小时则不计为 UV
+        if (new Date().getTime() - parseInt(flag) <= 86400000) {
+          return false;
+        }
+      }
+      localStorage.setItem(key, new Date().getTime().toString());
+      return true;
+    }
+
+    function addCount(Counter) {
+      var enableIncr = 'true' === 'true' && window.location.hostname !== 'localhost';
+      var getterArr = [];
+      var incrArr = [];
+
+      // 请求 PV 并自增
+      var pvCtn = document.querySelector('#leancloud-site-pv-container');
+      if (pvCtn || enableIncr) {
+        var pvGetter = getRecord(Counter, 'site-pv').then((record) => {
+          incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-pv');
+          if (ele) {
+            ele.innerText = record.time + 1;
+            if (pvCtn) {
+              pvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(pvGetter);
+      }
+
+      // 请求 UV 并自增
+      var uvCtn = document.querySelector('#leancloud-site-uv-container');
+      if (uvCtn || enableIncr) {
+        var uvGetter = getRecord(Counter, 'site-uv').then((record) => {
+          var vuv = validUV();
+          vuv && incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-uv');
+          if (ele) {
+            ele.innerText = record.time + (vuv ? 1 : 0);
+            if (uvCtn) {
+              uvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(uvGetter);
+      }
+
+      // 如果是文章，请求文章的浏览数，并自增
+      if ('true' === 'true') {
+        var viewCtn = document.querySelector('#leancloud-post-views-container');
+        if (viewCtn || enableIncr) {
+          var target = decodeURI('/2022/09/30/EDT%E9%99%90%E9%80%9F-%E5%8E%9F%E7%90%86%E4%B8%8E%E5%AE%9E%E7%8E%B0/');
+          var viewGetter = getRecord(Counter, target).then((record) => {
+            incrArr.push(buildIncrement(record.objectId))
+            if (viewCtn) {
+              var ele = document.querySelector('#leancloud-post-views');
+              if (ele) {
+                ele.innerText = (record.time || 0) + 1;
+                viewCtn.style.display = 'inline';
+              }
+            }
+          });
+          getterArr.push(viewGetter);
+        }
+      }
+
+      // 如果启动计数自增，批量发起自增请求
+      if (enableIncr) {
+        Promise.all(getterArr).then(() => {
+          incrArr.length > 0 && increment(Counter, incrArr);
+        })
+      }
+    }
+
+    var app_id = 'rGBkjlpYFYPq3Mztf0uHkwm2-gzGzoHsz'
+    var app_key = 'IwuJ6qbGLXA8pB3qeHHjuDT3'
+    var server_url = 'https://rgbkjlpy.lc-cn-n1-shared.com'
+
+    function fetchData(api_server) {
+      var Counter = (method, url, data) => {
+        return fetch(`${ api_server }/1.1${ url }`, {
+          method,
+          headers: {
+            'X-LC-Id': app_id,
+            'X-LC-Key': app_key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data)
+        });
+      };
+
+      addCount(Counter);
+    }
+
+    var api_server = app_id.slice(-9) !== '-MdYXbMMI' ? server_url : `https://${ app_id.slice(0, 8).toLowerCase() }.api.lncldglobal.com`;
+
+    if (api_server) {
+      fetchData(api_server);
+    } else {
+      fetch('https://app-router.leancloud.cn/2/route?appId=' + app_id)
+        .then(resp => resp.json())
+        .then(({api_server}) => {
+          fetchData('https://' + api_server);
+        });
+    }
+  })();
+</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>
