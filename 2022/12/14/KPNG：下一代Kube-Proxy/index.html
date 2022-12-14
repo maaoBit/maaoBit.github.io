@@ -1,0 +1,473 @@
+<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>KPNG：下一代Kube-Proxy - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">KPNG：下一代Kube-Proxy</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2022-12-14 18:35" pubdate>2022年12月14日 晚上</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 3.5k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 50 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">KPNG：下一代Kube-Proxy</h1><div class="markdown-body" id="post-body"><h2 id="简介"><a href="#简介" class="headerlink" title="简介"></a>简介</h2><p>kpng是社区新设计开发的下一代Kube-Proxy，目前仍然在积极开发中。<br>官方repo：<a target="_blank" rel="noopener" href="https://github.com/kubernetes-sigs/kpng">https://github.com/kubernetes-sigs/kpng</a><br>kep：<a target="_blank" rel="noopener" href="https://github.com/kubernetes/enhancements/pull/2094">https://github.com/kubernetes/enhancements/pull/2094</a><br>其主要目的是：</p><ul><li>解耦Kubernetes的业务逻辑（比如serivce的externalTrafficPolicy、internalTrafficPolicy之类逻辑）与后端proxy的实现，以实现一套通用的框架。<br> 对于当前的Kube-Proxy，如果要自己开发其他类型的proxy，需要实现自己的proxier来实现<a target="_blank" rel="noopener" href="https://github.com/kubernetes/kubernetes/blob/23c65ec590/pkg/proxy/types.go#L30">Provider</a> 接口，而Provider接口包含了对Service、Endpoint、Node资源的处理逻辑，这部分对于所有proxier来说都是重复的代码。同时，不同proxier内部也存在某些子系统的重复逻辑，比如conntrack模块。</li><li>提高可扩展性，支撑更大规模的集群。目前Kube-Proxy的扩展需要增加对Kube-APIServer的watch请求，不利于规模的扩大。</li></ul><p>kpng的主要思路如下：</p><div class="hljs"><pre><code class="hljs xl">[<span class="hljs-function"><span class="hljs-title">k8s</span> API] ----&gt;</span> [<span class="hljs-function"><span class="hljs-title">local</span> model] ----&gt;</span> [<span class="hljs-function"><span class="hljs-title">plugin</span>] ----&gt;</span> [<span class="hljs-function"><span class="hljs-title">aggregator</span>] ----&gt;</span> [subsystem]</code></pre></div><p>1）根据k8s API的资源，构建一个本地期望状态ENLS（expected node-local state），只有当ENLS发生变化的时候，后端plugin才会触发操作。<br>相比Kube-Proxy直接监听Kube-APIServer的event，这种方式能减少无效触发（不改变ENLS的API event）。引用社区在1K service、1.5K pod下的测试。其中rev是ENLS发送变化的event数量，events是API events。</p><div class="hljs"><pre><code class="hljs apache"><span class="hljs-attribute">stats</span>:	time	events	rev	usr cpu	sys cpu	tot cpu	mem	revs/events
+<span class="hljs-attribute">stats</span>:	ms	count	count	ms	ms	%	MiB	%
+<span class="hljs-attribute">stats</span>:	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>	+Inf	<span class="hljs-number">1</span>.<span class="hljs-number">22</span>	NaN
+<span class="hljs-attribute">stats</span>:	<span class="hljs-number">1000</span>	<span class="hljs-number">2134</span>	<span class="hljs-number">1064</span>	<span class="hljs-number">3</span>	<span class="hljs-number">308</span>	<span class="hljs-number">31</span>.<span class="hljs-number">280</span>	<span class="hljs-number">3</span>.<span class="hljs-number">93</span>	<span class="hljs-number">49</span>.<span class="hljs-number">859</span>
+<span class="hljs-attribute">stats</span>:	<span class="hljs-number">2000</span>	<span class="hljs-number">2137</span>	<span class="hljs-number">1064</span>	<span class="hljs-number">0</span>	<span class="hljs-number">1</span>	<span class="hljs-number">0</span>.<span class="hljs-number">131</span>	<span class="hljs-number">3</span>.<span class="hljs-number">94</span>	<span class="hljs-number">49</span>.<span class="hljs-number">789</span>
+<span class="hljs-attribute">stats</span>:	<span class="hljs-number">3000</span>	<span class="hljs-number">2138</span>	<span class="hljs-number">1064</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>.<span class="hljs-number">050</span>	<span class="hljs-number">3</span>.<span class="hljs-number">94</span>	<span class="hljs-number">49</span>.<span class="hljs-number">766</span>
+[...]
+<span class="hljs-attribute">stats</span>:	<span class="hljs-number">298000</span>	<span class="hljs-number">21785</span>	<span class="hljs-number">1067</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>.<span class="hljs-number">050</span>	<span class="hljs-number">4</span>.<span class="hljs-number">16</span>	<span class="hljs-number">4</span>.<span class="hljs-number">898</span>
+<span class="hljs-attribute">stats</span>:	<span class="hljs-number">299000</span>	<span class="hljs-number">21787</span>	<span class="hljs-number">1067</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>.<span class="hljs-number">089</span>	<span class="hljs-number">4</span>.<span class="hljs-number">16</span>	<span class="hljs-number">4</span>.<span class="hljs-number">897</span>
+<span class="hljs-attribute">stats</span>:	<span class="hljs-number">300000</span>	<span class="hljs-number">21788</span>	<span class="hljs-number">1067</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>.<span class="hljs-number">061</span>	<span class="hljs-number">4</span>.<span class="hljs-number">17</span>	<span class="hljs-number">4</span>.<span class="hljs-number">897</span>
+<span class="hljs-attribute">stats</span>:	<span class="hljs-number">301000</span>	<span class="hljs-number">23925</span>	<span class="hljs-number">1068</span>	<span class="hljs-number">4</span>	<span class="hljs-number">64</span>	<span class="hljs-number">6</span>.<span class="hljs-number">882</span>	<span class="hljs-number">3</span>.<span class="hljs-number">35</span>	<span class="hljs-number">4</span>.<span class="hljs-number">464</span> # GC after <span class="hljs-number">2</span>k+ events (without a proxy-related change)
+<span class="hljs-attribute">stats</span>:	<span class="hljs-number">302000</span>	<span class="hljs-number">23926</span>	<span class="hljs-number">1068</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>.<span class="hljs-number">052</span>	<span class="hljs-number">3</span>.<span class="hljs-number">35</span>	<span class="hljs-number">4</span>.<span class="hljs-number">464</span>
+[...]
+<span class="hljs-attribute">stats</span>:	<span class="hljs-number">1798000</span>	<span class="hljs-number">130941</span>	<span class="hljs-number">1218</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>.<span class="hljs-number">090</span>	<span class="hljs-number">4</span>.<span class="hljs-number">68</span>	<span class="hljs-number">0</span>.<span class="hljs-number">930</span>
+<span class="hljs-attribute">stats</span>:	<span class="hljs-number">1799000</span>	<span class="hljs-number">130942</span>	<span class="hljs-number">1218</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>	<span class="hljs-number">0</span>.<span class="hljs-number">055</span>	<span class="hljs-number">4</span>.<span class="hljs-number">69</span>	<span class="hljs-number">0</span>.<span class="hljs-number">930</span></code></pre></div><p>![[test-run.1k-svc.svg]]<br>2）<code>aggregate</code>聚合多个组件的对子系统的操作，最终进行统一的提交。比如calico、Kube-Proxy、hostport cni等对iptables的操作，统一由<code>aggregate</code>进行操作的合并，避免相互之间的锁竞争。</p><h2 id="KPNG的设计"><a href="#KPNG的设计" class="headerlink" title="KPNG的设计"></a>KPNG的设计</h2><p>由于KPNG目前仍在开发中，最终的技术方案可能会有变动，暂时使用<a target="_blank" rel="noopener" href="https://github.com/kubernetes-sigs/kpng/tree/2d38809c64cb70694731b37d150bf6c0268844ca">最新版本</a> 的实现来介绍。KPNG架构图如下。<br>![[kpng-arch-try-2.svg]]<br>首先是上半Server部分，核心是存储了Services、Endpoints、Nodes信息的<code>proxystore.Store</code>，底层是一个B树，<code>proxystore.Store</code>的输入来源可以是其他kpng的gRPC API（api2store）、Kube-APIServer（kube2store）以及本地文件（file2store），对外提供访问的方式可以是gRPC server（store2api）、本地内存（store2localdiff）、本地文件（store2file）。代码实现都在<code>server/jobs/xxx2store</code>以及<code>server/jobs/store2xxx</code>下。</p><p>下半Client部分，获取数据并交于backend进行处理，backend可以是简单的日志打印，或是实现iptables、ipvs、ebpf规则等。获取数据方式目前有两种，一种是gRPC，对应上半部分的<code>store2api</code>；另一种是内存获取，对应<code>store2localdiff</code>。两者都会调用<code>localsink.Sink</code>的<code>func Send(op *OpItem) error</code>，将相应的变更操作传递给后面的逻辑进行处理。</p><h2 id="KPNG使用"><a href="#KPNG使用" class="headerlink" title="KPNG使用"></a>KPNG使用</h2><p>官方博客里的<a target="_blank" rel="noopener" href="https://kubernetes.io/blog/2021/10/18/use-kpng-to-write-specialized-kube-proxiers/">例子</a> 是通过gRPC的方式实现资源变更的打印，backend的实现在代码库的examples/pipe-exec/cmd/kpng-json/main.go中。</p><p>除此外，这里给出iptables模式的KPNG部署。首先在代码库的根目录下生成镜像。</p><div class="hljs"><pre><code class="hljs css"><span class="hljs-selector-tag">docker</span> <span class="hljs-selector-tag">build</span> <span class="hljs-selector-tag">-t</span> <span class="hljs-selector-tag">kpng</span><span class="hljs-selector-pseudo">:latest</span> .</code></pre></div><p>创建如下的daemonset：</p><div class="hljs"><pre><code class="hljs yaml"><span class="hljs-attr">apiVersion:</span> <span class="hljs-string">apps/v1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">DaemonSet</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">kpng-proxy</span>
+  <span class="hljs-attr">namespace:</span> <span class="hljs-string">kube-system</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">selector:</span>
+    <span class="hljs-attr">matchLabels:</span>
+      <span class="hljs-attr">app:</span> <span class="hljs-string">kpng-proxy</span>
+  <span class="hljs-attr">template:</span>
+    <span class="hljs-attr">metadata:</span>
+      <span class="hljs-attr">labels:</span>
+        <span class="hljs-attr">app:</span> <span class="hljs-string">kpng-proxy</span>
+    <span class="hljs-attr">spec:</span>
+      <span class="hljs-comment"># 偷懒，直接使用Kube-Proxy的sa</span>
+      <span class="hljs-attr">serviceAccount:</span> <span class="hljs-string">kube-proxy</span>
+      <span class="hljs-attr">hostNetwork:</span> <span class="hljs-literal">true</span>
+      <span class="hljs-attr">priorityClassName:</span> <span class="hljs-string">system-node-critical</span>
+      <span class="hljs-attr">nodeSelector:</span>
+        <span class="hljs-attr">kubernetes.io/os:</span> <span class="hljs-string">linux</span>
+      <span class="hljs-attr">containers:</span>
+      <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">kpng</span>
+        <span class="hljs-attr">image:</span> <span class="hljs-string">kpng:latest</span>
+        <span class="hljs-attr">imagePullPolicy:</span> <span class="hljs-string">IfNotPresent</span>
+        <span class="hljs-attr">command:</span>
+        <span class="hljs-bullet">-</span> <span class="hljs-string">kpng</span>
+        <span class="hljs-bullet">-</span> <span class="hljs-string">kube</span>
+        <span class="hljs-bullet">-</span> <span class="hljs-string">--service-proxy-name=kpng-example</span>
+        <span class="hljs-bullet">-</span> <span class="hljs-string">to-local</span>
+        <span class="hljs-bullet">-</span> <span class="hljs-string">to-iptables</span>
+        <span class="hljs-attr">securityContext:</span>
+          <span class="hljs-attr">privileged:</span> <span class="hljs-literal">true</span></code></pre></div><p>接着创建带有<code>service.kubernetes.io/service-proxy-name: kpng-example</code>标签的service，就能看到在iptables里生成对应的规则了。（如果不确定是Kube-Proxy生成的iptables规则还是kpng，可以在测试前，先把Kube-Proxy切换为ipvs模式或删除）。<br>上面例子中，<code>kube</code>子命令指定了通过<code>kube2store</code>监听kube-apiserver来获取<code>proxystore.Store</code>，<code>to-local</code>子命令指定了通过<code>store2localdiff</code>将<code>proxystore.Store</code>变更增量发送到后端，<code>to-iptables</code>子命令指定使用后端<code>iptables</code>。</p><h2 id="KPNG代码粗读"><a href="#KPNG代码粗读" class="headerlink" title="KPNG代码粗读"></a>KPNG代码粗读</h2><p>首先，kpng代码里实现了很多种名叫<code>store</code>、<code>sink</code>、<code>job</code>的类。总的来说：</p><ul><li><code>job</code>实现数据的处理与传递。比如<code>server/jobs/kube2store/kube2store.go</code>中的<code>Job</code>实现数据从Kube-APIServer（通过List-Watch）到<code>proxystore.Store</code>的传递；<code>server/jobs/store2diff/store2diff.go</code>中的<code>Job</code>实现数据从<code>proxystore.Store</code>到<code>store2diff.Sink</code>的传递。</li><li><code>store</code>用于存储数据，一般底层都是B树，主要的包括存储Services、Endpoints、Nodes信息的<code>proxystore.Store</code>，能提供数据变化跟踪的<code>lightdiffstore.DiffStore</code>与<code>diffstore.Store</code>。</li><li><code>sink</code>提供一些接口，用于接受<code>job</code>数据的传递，一般定义为<code>interface</code>。比如上面提到的<code>client/localsink/localsink.go</code>中的<code>localsink.Sink</code>。<code>sink</code>的实现也可能会是另一个<code>job</code>。</li></ul><h3 id="代码结构"><a href="#代码结构" class="headerlink" title="代码结构"></a>代码结构</h3><p>主要的代码包括：</p><ul><li><code>api/</code>：grpc api的定义，Services、Endpoints、Nodes资源信息的api定义。</li><li><code>backends/</code>：后端实现，都实现了<code>client/backendcmd</code>中的<code>Cmd interface</code>，使用<code>client/backendcmd</code>中的<code>Register()</code>注册，然后就能通过子命令调用对应的后端。<div class="hljs"><pre><code class="hljs go"><span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">init</span><span class="hljs-params">()</span></span> &#123;
+	backendcmd.Register(<span class="hljs-string">&quot;to-iptables&quot;</span>, <span class="hljs-function"><span class="hljs-keyword">func</span><span class="hljs-params">()</span> <span class="hljs-title">backendcmd</span>.<span class="hljs-title">Cmd</span></span> &#123; <span class="hljs-keyword">return</span> &amp;Backend&#123;&#125; &#125;)
+&#125;</code></pre></div></li><li><code>client/</code>：内容比较杂，包含了client用到的<code>store</code>、<code>sink</code>等结构。</li><li><code>cmd/kpng/</code>：main程序代码</li><li><code>from-k8s/</code>：从kubernetes代码库中移植过来的代码</li><li><code>server/</code>：<ul><li><code>server/jobs</code>：包含了server端<code>xxx2store</code>与<code>store2xxx</code>的各种job</li><li><code>server/proxystore</code>：定义了基本的存储结构<code>proxystore.Store</code></li></ul></li></ul><p>接下来分别以<code>gRPC server + examples/print-state</code>的用例和<code>local server + iptables backend</code>的用例介绍代码流程，两个用例能覆盖大多数核心代码，对KPNG有个大体的了解。</p><h3 id="gPRC-Server"><a href="#gPRC-Server" class="headerlink" title="gPRC Server"></a>gPRC Server</h3><p>当执行<code>kpng kube to-api</code>时，kpng会监听Kube-APIServer，并启动gRPC server。</p><h4 id="kube子命令"><a href="#kube子命令" class="headerlink" title="kube子命令"></a>kube子命令</h4><p><code>kube</code>子命令的定义：</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// cmd/kpng/k2s.go</span>
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">kube2storeCmd</span><span class="hljs-params">()</span> *<span class="hljs-title">cobra</span>.<span class="hljs-title">Command</span></span> &#123;
+	<span class="hljs-comment">// kube to * command</span>
+	k2sCmd := &amp;cobra.Command&#123;
+		Use:   <span class="hljs-string">&quot;kube&quot;</span>,
+		Short: <span class="hljs-string">&quot;watch Kubernetes API to the globalv1 state&quot;</span>,
+	&#125;
+	...
+
+	<span class="hljs-comment">// setupKube2store定义了从kube-apiserver到store的逻辑</span>
+	<span class="hljs-comment">// storecmds.Commands为kube子命令添加store到local\gRPC\file的逻辑</span>
+	k2sCmd.AddCommand(storecmds.Commands(setupKube2store)...)
+
+	<span class="hljs-keyword">return</span> k2sCmd
+&#125;
+
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">setupKube2store</span><span class="hljs-params">()</span> <span class="hljs-params">(ctx context.Context, store *proxystore.Store, err error)</span></span> &#123;
+	...
+	<span class="hljs-comment">// 创建新的proxystore.store</span>
+	store = proxystore.New()
+
+	<span class="hljs-comment">// kube2stroe job是Kube-APIServer到store主要逻辑的实现</span>
+	<span class="hljs-keyword">go</span> kube2store.Job&#123;
+		Kube:   kubeClient,
+		Store:  store,
+		Config: k2sCfg,
+	&#125;.Run(ctx)
+
+	<span class="hljs-keyword">return</span>
+&#125;</code></pre></div><p><code>kube2store.Job</code>的实现在<code>server/jobs/kube2store</code>下，<code>server/jobs</code>下也包含其他与store相关的job，大同小异。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// server/jobs/kube2store/kube2store.go</span>
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-params">(j Job)</span> <span class="hljs-title">Run</span><span class="hljs-params">(ctx context.Context)</span></span> &#123;
+	...
+	<span class="hljs-comment">// service的informer factory，list时只选择label service.kubernetes.io/service-proxy-name的值与kpng ServiceProxyName相同的service</span>
+	<span class="hljs-comment">// 由于informer factory的ListOptions是对所有资源都进行过滤的，因此后面还创建了一个coreFactory</span>
+	svcFactory := informers.NewSharedInformerFactoryWithOptions(j.Kube, time.Second*<span class="hljs-number">30</span>,
+		informers.WithTweakListOptions(<span class="hljs-function"><span class="hljs-keyword">func</span><span class="hljs-params">(options *metav1.ListOptions)</span></span> &#123; options.LabelSelector = labelSelector &#125;))
+	...
+	<span class="hljs-comment">// start watches</span>
+	coreFactory := factory.Core().V1()
+	
+	...
+	<span class="hljs-comment">//启动service、nodes、endpointSlices的List-watch</span>
+	servicesInformer.AddEventHandler(&amp;serviceEventHandler&#123;j.eventHandler(servicesInformer)&#125;)
+	<span class="hljs-keyword">go</span> servicesInformer.Run(stopCh)
+
+	nodesInformer := coreFactory.Nodes().Informer()
+	nodesInformer.AddEventHandler(&amp;nodeEventHandler&#123;j.eventHandler(nodesInformer)&#125;)
+	<span class="hljs-keyword">go</span> nodesInformer.Run(stopCh)
+
+	slicesInformer := factory.Discovery().V1().EndpointSlices().Informer()
+	slicesInformer.AddEventHandler(&amp;sliceEventHandler&#123;j.eventHandler(slicesInformer)&#125;)
+	<span class="hljs-keyword">go</span> slicesInformer.Run(stopCh)
+	...
+&#125;</code></pre></div><p>上面的各个eventHandler最终根据List-watch的事件，更新store，以add service event为例。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// server/jobs/kube2store/service-event-handler.go</span>
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-params">(h *serviceEventHandler)</span> <span class="hljs-title">OnAdd</span><span class="hljs-params">(obj <span class="hljs-keyword">interface</span>&#123;&#125;)</span></span> &#123;
+	h.onChange(obj)
+&#125;
+
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-params">(h *serviceEventHandler)</span> <span class="hljs-title">onChange</span><span class="hljs-params">(obj <span class="hljs-keyword">interface</span>&#123;&#125;)</span></span> &#123;
+	...
+	<span class="hljs-comment">// 把corev1.service转换为kpng api中定义的localv1.Service，用于保存在store中</span>
+	service := &amp;localv1.Service&#123;
+		Namespace:   svc.Namespace,
+		Name:        svc.Name,
+		Type:        <span class="hljs-keyword">string</span>(svc.Spec.Type),
+		Labels:      globsFilter(svc.Labels, h.config.ServiceLabelGlobs),
+		Annotations: globsFilter(svc.Annotations, h.config.ServiceAnnonationGlobs),
+		IPs: &amp;localv1.ServiceIPs&#123;
+			ClusterIPs:  &amp;localv1.IPSet&#123;&#125;,
+			ExternalIPs: localv1.NewIPSet(svc.Spec.ExternalIPs...),
+		&#125;,
+		ExternalTrafficToLocal: svc.Spec.ExternalTrafficPolicy == v1.ServiceExternalTrafficPolicyTypeLocal,
+		InternalTrafficToLocal: internalTrafficPolicy == v1.ServiceInternalTrafficPolicyLocal,
+	&#125;
+	...
+	<span class="hljs-comment">// 存储到store中，proxystore.Tx是在proxystore.Store上封装了一层，前者能把service、nodes、endpoint转成kv，存储到proxystore.Store中</span>
+	<span class="hljs-comment">// Update()传入闭包，操作proxystore.Tx</span>
+	h.s.Update(<span class="hljs-function"><span class="hljs-keyword">func</span><span class="hljs-params">(tx *proxystore.Tx)</span></span> &#123;
+		...
+		tx.SetService(service)
+	&#125;)
+&#125;</code></pre></div><p>到此，<code>kube</code>子命令的功能就结束了。</p><h4 id="to-api子命令"><a href="#to-api子命令" class="headerlink" title="to-api子命令"></a>to-api子命令</h4><p>上面有提到，为kube子命令添加store到local、gRPC、file的逻辑，都是在<code>storecmds.Commands</code>中实现的。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// cmd/kpng/storecmds/storecmds.go</span>
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-params">(c SetupFunc)</span> <span class="hljs-title">ToAPICmd</span><span class="hljs-params">()</span> *<span class="hljs-title">cobra</span>.<span class="hljs-title">Command</span></span> &#123;
+	cmd := &amp;cobra.Command&#123;
+		Use: <span class="hljs-string">&quot;to-api&quot;</span>,
+	&#125;
+	...
+	cmd.RunE = <span class="hljs-function"><span class="hljs-keyword">func</span><span class="hljs-params">(_ *cobra.Command, _ []<span class="hljs-keyword">string</span>)</span> <span class="hljs-params">(err error)</span></span> &#123;
+		...
+		<span class="hljs-comment">// 从xxx2store对应的SetupFunc中获取store</span>
+		ctx, store, err := c()
+		<span class="hljs-comment">// store2api.Job实现将proxystore.Store暴露给gRPC server上</span>
+		j := &amp;store2api.Job&#123;
+			Store:  store,
+			Config: cfg,
+		&#125;
+		<span class="hljs-keyword">return</span> j.Run(ctx)
+	&#125;
+	...
+&#125;
+
+<span class="hljs-comment">// server/jobs/store2api/store2api.go</span>
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-params">(j *Job)</span> <span class="hljs-title">Run</span><span class="hljs-params">(ctx context.Context)</span> <span class="hljs-title">error</span></span> &#123;
+	lis := server.MustListen(j.Config.BindSpec)
+
+	<span class="hljs-comment">// 创建gRPC服务</span>
+	...
+		srv = grpc.NewServer()
+		
+	<span class="hljs-comment">// 启动global API与endpoint API的server</span>
+	<span class="hljs-keyword">if</span> j.Config.GlobalAPI &#123;
+		global.Setup(srv, j.Store)
+	&#125;
+	<span class="hljs-keyword">if</span> j.Config.LocalAPI &#123;
+		endpoints.Setup(srv, j.Store)
+	&#125;
+	
+	<span class="hljs-keyword">return</span> srv.Serve(lis)
+&#125;</code></pre></div><p>以<code>endpoints.Setup()</code>为例，注册的gRPC server设置如下：</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// api/localv1/api_grpc.pb.go</span>
+
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">RegisterSetsServer</span><span class="hljs-params">(s grpc.ServiceRegistrar, srv SetsServer)</span></span> &#123;
+	<span class="hljs-comment">// 当客户端请求gRPC server时，会使用srv调用_Sets_Watch_Handler()方法</span>
+	s.RegisterService(&amp;Sets_ServiceDesc, srv)
+&#125;
+
+<span class="hljs-function"><span class="hljs-keyword">func</span> _<span class="hljs-title">Sets_Watch_Handler</span><span class="hljs-params">(srv <span class="hljs-keyword">interface</span>&#123;&#125;, stream grpc.ServerStream)</span> <span class="hljs-title">error</span></span> &#123;
+	<span class="hljs-comment">// 调用SetsServer的Watch方法，传入setsWatchServer，用于信息的接受与发送</span>
+	<span class="hljs-keyword">return</span> srv.(SetsServer).Watch(&amp;setsWatchServer&#123;stream&#125;)
+&#125;
+
+<span class="hljs-comment">// setsWatchServer将grpc.ServerStream封装为Send()与Recv()方法</span>
+<span class="hljs-keyword">type</span> setsWatchServer <span class="hljs-keyword">struct</span> &#123;
+	grpc.ServerStream
+&#125;
+
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-params">(x *setsWatchServer)</span> <span class="hljs-title">Send</span><span class="hljs-params">(m *OpItem)</span> <span class="hljs-title">error</span></span> &#123;
+	<span class="hljs-keyword">return</span> x.ServerStream.SendMsg(m)
+&#125;
+
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-params">(x *setsWatchServer)</span> <span class="hljs-title">Recv</span><span class="hljs-params">()</span> <span class="hljs-params">(*WatchReq, error)</span></span> &#123;
+	<span class="hljs-keyword">if</span> err := x.ServerStream.RecvMsg(m); err != <span class="hljs-literal">nil</span> &#123;
+		...
+	&#125;
+	...
+&#125;
+
+<span class="hljs-keyword">var</span> Sets_ServiceDesc = grpc.ServiceDesc&#123;
+	...
+	Streams: []grpc.StreamDesc&#123;
+		&#123;
+		...
+			Handler:       _Sets_Watch_Handler,
+		&#125;,
+	&#125;,
+&#125;</code></pre></div><p>可以看出gRPC Server接收的是<code>WatchReq</code>，而发送的<code>OpItem</code>，<code>OpItem</code>有点像List-watch的event，但只包括set、delete、reset、sync四种，set、delete用来告诉客户端资源有哪些增量的变化，sync表示最新的增量已传输完毕，告诉客户端可以进行backend规则的同步了，reset一般用在gRPC重连的情况。<br><code>SetsServer</code>是个interface，实现是在<code>server/pkg/server/endpoints/server.go</code>里的<code>Server</code>。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-params">(s *Server)</span> <span class="hljs-title">Watch</span><span class="hljs-params">(res localv1.Sets_WatchServer)</span> <span class="hljs-title">error</span></span> &#123;
+	...
+	<span class="hljs-comment">// store2localdiff会根据Store计算资源的变化，通过Sink的Send方法将增量发送</span>
+	job := &amp;store2localdiff.Job&#123;
+		Store: s.Store,
+		<span class="hljs-comment">// serverSink继承了localv1.Sets_WatchServer的Send方法，也就是上面setsWatchServer的Send方法，因此最终通过gRPC发到Client端</span>
+		Sink:  serverSink&#123;res, remote&#125;,
+	&#125;
+	...
+	<span class="hljs-keyword">return</span> job.Run(res.Context())
+&#125;</code></pre></div><h4 id="diff"><a href="#diff" class="headerlink" title="diff"></a>diff</h4><p><code>store2localdiff.Job.Run()</code>内部调用了<code>store2diff.Job.Run()</code>，这块是实现资源变更的增量发送逻辑，即每次只将资源变更的增量通过<code>localsink.Sink.Send()</code>发送，不发送资源的全部信息。</p><p>diff这块代码较多，简言之就是：</p><ul><li>资源变更的追踪是依靠<code>client/lightdiffstore</code>中的<code>DiffStore</code>完成的，其本质是一个B树，在value中记录了此value在上一次Reset之后的状态（changed or unchanged）。而<code>server/pkg/server/watchstate</code>中的<code>WatchState</code>在<code>DiffStore</code>上封装一层，可以将<code>DiffStore</code> diff的结果通过<code>localv1.OpSink.Send()</code>发送出去。</li><li><code>store2diff.Job.Run()</code>会先创建<code>WatchState</code>。然后，在每一轮循环中，先通过<code>store2diff.Sink.Update()</code>从<code>proxystore.Store</code>中更新<code>WatchState</code>；再通过<code>store2diff.Sink.SendDiff()</code>发送diff的结果；当diff结果发送完成后，在发送sync的OpItem，表示发送结束，可以同步。<div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// server/jobs/store2diff/store2diff.go</span>
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-params">(j *Job)</span> <span class="hljs-title">Run</span><span class="hljs-params">(ctx context.Context)</span> <span class="hljs-params">(err error)</span></span> &#123;
+	<span class="hljs-comment">// 创建watchstate</span>
+	w := watchstate.New(j.Sink, j.Sets)
+	...
+	<span class="hljs-keyword">for</span> &#123;
+		...
+		<span class="hljs-keyword">for</span> !updated &#123;
+			<span class="hljs-comment">// block until the revision has been</span>
+			<span class="hljs-comment">// incremented... then, we update our state from the</span>
+			<span class="hljs-comment">// proxystore</span>
+			rev, closed = j.Store.View(rev, <span class="hljs-function"><span class="hljs-keyword">func</span><span class="hljs-params">(tx *proxystore.Tx)</span></span> &#123;
+				j.Sink.Update(tx, w)
+			&#125;)
+			...
+			<span class="hljs-comment">// send the diff</span>
+			updated = j.Sink.SendDiff(w)
+		&#125;
+
+		<span class="hljs-comment">// signal the change set is fully sent</span>
+		w.SendSync()
+
+		<span class="hljs-keyword">if</span> w.Err != <span class="hljs-literal">nil</span> &#123;
+			<span class="hljs-keyword">return</span> w.Err
+		&#125;
+	&#125;</code></pre></div></li><li><code>store2localdiff.Job</code>实现了<code>store2diff.Sink</code>接口，其中在<code>SendDiff()</code>中，发送完diff结果后，会调用<code>WatchState</code>的<code>Reset()</code>进行资源状态的重置。</li></ul><p>到此为止，整个gRPC Server的流程就结束了。</p><h3 id="gRPC-Client"><a href="#gRPC-Client" class="headerlink" title="gRPC Client"></a>gRPC Client</h3><p>在kpng中，要实现一个自定义的gRPC Client逻辑只要调用<code>client.Run(func)</code>，将实现<code>func</code>传入即可。以<code>examples/print-state</code>为例，其实现了接收内容的打印。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// examples/print-state/main.go</span>
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">main</span><span class="hljs-params">()</span></span> &#123;
+	client.Run(printState)
+&#125;
+
+<span class="hljs-comment">// ServiceEndpoints结构记录了一个Service与它对应的本节点的Endpoint</span>
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">printState</span><span class="hljs-params">(items []*client.ServiceEndpoints)</span></span> &#123;
+	fmt.Println(<span class="hljs-string">&quot;# ------------------------------------------------------------------------&quot;</span>)
+	fmt.Println(<span class="hljs-string">&quot;#&quot;</span>, time.Now())
+	fmt.Println(<span class="hljs-string">&quot;#&quot;</span>)
+	<span class="hljs-keyword">for</span> _, item := <span class="hljs-keyword">range</span> items &#123;
+		fmt.Fprintln(os.Stdout, item)
+	&#125;
+&#125;</code></pre></div><p><code>client.Run</code>使用了<code>fullstate.Sink</code>，<code>fullstate.Sink</code>内部有个B树结构，存储gRPC客户端接受到的数据，然后每次在收到Server端发送的sync信号后，将全量的数据发给回调函数，也就是传入<code>client.Run()</code>的自定义逻辑。<br>![[kpng-fullstate-syncer.png]]</p><p>到此为止，整个gRPC Server + gRPC Client的模式就结束了。</p><h3 id="local-Server"><a href="#local-Server" class="headerlink" title="local Server"></a>local Server</h3><p>除了上面的gRPC的方式外，还有就是上面iptable用例中，<code>kpng kube to-local to-iptables</code>命令通过内存的方式传递数据。Server和Client会编译到一个二进制文件中。</p><h4 id="to-local"><a href="#to-local" class="headerlink" title="to-local"></a>to-local</h4><p><code>to-local</code>接kube子命令，将<code>proxystore.Store</code>中的资源通过<code>store2localdiff.Job</code>处理后发送给下一个<code>localsink.Sink</code>的实现。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// cmd/kpng/storecmds/storecmds.go</span>
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-params">(c SetupFunc)</span> <span class="hljs-title">ToLocalCmd</span><span class="hljs-params">()</span> <span class="hljs-params">(cmd *cobra.Command)</span></span> &#123;
+	cmd = &amp;cobra.Command&#123;
+		Use: <span class="hljs-string">&quot;to-local&quot;</span>,
+	&#125;
+
+	job := &amp;store2localdiff.Job&#123;&#125;
+	...
+	cmd.AddCommand(LocalCmds(<span class="hljs-function"><span class="hljs-keyword">func</span><span class="hljs-params">(sink localsink.Sink)</span> <span class="hljs-title">error</span></span> &#123;
+		job.Sink = sink
+		<span class="hljs-keyword">return</span> job.Run(ctx)
+	&#125;)...)
+
+	<span class="hljs-keyword">return</span>
+&#125;</code></pre></div><h3 id="backend"><a href="#backend" class="headerlink" title="backend"></a>backend</h3><p>上面有介绍，backend都是通过<code>backendcmd.Register</code>方法注册，然后在<code>LocalCmds()</code>创建相应的命令。</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// cmd/kpng/storecmds/storecmds.go</span>
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">LocalCmds</span><span class="hljs-params">(run <span class="hljs-keyword">func</span>(sink localsink.Sink)</span> <span class="hljs-title">error</span>) <span class="hljs-params">(cmds []*cobra.Command)</span></span> &#123;
+	<span class="hljs-comment">// 获取所有注册的backend</span>
+	<span class="hljs-keyword">for</span> _, useCmd := <span class="hljs-keyword">range</span> backendcmd.Registered() &#123;
+		backend := useCmd.New()
+
+		cmd := &amp;cobra.Command&#123;
+			Use: useCmd.Use,
+			RunE: <span class="hljs-function"><span class="hljs-keyword">func</span><span class="hljs-params">(_ *cobra.Command, _ []<span class="hljs-keyword">string</span>)</span> <span class="hljs-title">error</span></span> &#123;
+			<span class="hljs-comment">// 获取backend的Sink，用于在to-local子命令创建的store2localdiff.Job中获取diff结果</span>
+				<span class="hljs-keyword">return</span> run(backend.Sink())
+			&#125;,
+		&#125;
+		...
+	&#125;
+&#125;</code></pre></div><p>以iptable为例，<code>Sink()</code>方法如下：</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// backends/iptables/sink.go</span>
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-params">(s *Backend)</span> <span class="hljs-title">Sink</span><span class="hljs-params">()</span> <span class="hljs-title">localsink</span>.<span class="hljs-title">Sink</span></span> &#123;
+	<span class="hljs-keyword">return</span> filterreset.New(pipe.New(decoder.New(s), decoder.New(conntrack.NewSink())))
+&#125;</code></pre></div><p>Server端发送的diff结果，流向如下：</p><div class="hljs"><pre><code class="hljs xl">                                    | --&gt; <span class="hljs-function"><span class="hljs-title">decoder</span>.sink --&gt;</span> iptables
+                                    |
+<span class="hljs-function"><span class="hljs-title">diff</span> --&gt;</span> <span class="hljs-function"><span class="hljs-title">filterreset</span>.sink --&gt;</span> <span class="hljs-function"><span class="hljs-title">pipe</span>.sink --&gt;</span> <span class="hljs-function"><span class="hljs-title">decoder</span>.sink --&gt;</span> conntrack</code></pre></div><p>可以看到kpng中真的是有各种各样的Sink：<code>pipe.Sink</code>将数据发送给多个目的地；<code>decoder.Sink</code>将raw数据转换成service、endpoint、node API；<code>filterreset.Sink</code>是相对于上面介绍的<code>fullstate.Sink</code>来说的，不会将全量数据往后发送，而是过滤掉之前发送过且无变化的资源，相当于是发送增量数据。</p><p>![[kpng-filterreset-syncer.png]]</p><p>如上图所示，资源数据最后到达backend，由backend配置数据路径。kpng中的iptables、ipvs等实现主要是搬的Kube-Proxy代码，同时还在开发eBPF的数据路径。</p><h2 id="最后"><a href="#最后" class="headerlink" title="最后"></a>最后</h2><p>除了上面的介绍外，kpng项目中还有很多值得一看的亮点。比如kpng在<code>diffstore.Store</code>中用到了go 1.18新支持的范型，代码库中的<code>doc/service-proxy.md</code>是一篇非常值得一读的Kube-Proxy设计思想的文档。</p></div><hr><div><div class="post-metas mb-3"><div class="post-meta"><i class="iconfont icon-tags"></i> <a class="hover-with-bg" href="/tags/kube-proxy/">kube-proxy</a></div></div><p class="note note-warning">转载请注明出处</p><div class="post-prevnext row"><article class="post-prev col-6"></article><article class="post-next col-6"> <a href="/2022/09/30/EDT%E9%99%90%E9%80%9F-%E5%8E%9F%E7%90%86%E4%B8%8E%E5%AE%9E%E7%8E%B0/"><span class="hidden-mobile">EDT限速: 原理与实现</span> <span class="visible-mobile">下一篇</span><i class="iconfont icon-arrowright"></i></a></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
+  (function () {
+    // 查询存储的记录
+    function getRecord(Counter, target) {
+      return new Promise(function (resolve, reject) {
+        Counter('get', '/classes/Counter?where=' + encodeURIComponent(JSON.stringify({target})))
+          .then(resp => resp.json())
+          .then(({results, code, error}) => {
+            if (code === 401) {
+              throw error;
+            }
+            if (results && results.length > 0) {
+              var record = results[0];
+              resolve(record);
+            } else {
+              Counter('post', '/classes/Counter', {target, time: 0})
+                .then(resp => resp.json())
+                .then((record, error) => {
+                  if (error) {
+                    throw error;
+                  }
+                  resolve(record);
+                }).catch(error => {
+                console.error('Failed to create', error);
+                reject(error);
+              });
+            }
+          }).catch((error) => {
+          console.error('LeanCloud Counter Error:', error);
+          reject(error);
+        });
+      })
+    }
+
+    // 发起自增请求
+    function increment(Counter, incrArr) {
+      return new Promise(function (resolve, reject) {
+        Counter('post', '/batch', {
+          "requests": incrArr
+        }).then((res) => {
+          res = res.json();
+          if (res.error) {
+            throw res.error;
+          }
+          resolve(res);
+        }).catch((error) => {
+          console.error('Failed to save visitor count', error);
+          reject(error);
+        });
+      });
+    }
+
+    // 构建自增请求体
+    function buildIncrement(objectId) {
+      return {
+        "method": "PUT",
+        "path": `/1.1/classes/Counter/${ objectId }`,
+        "body": {
+          "time": {
+            '__op': 'Increment',
+            'amount': 1
+          }
+        }
+      }
+    }
+
+    // 校验是否为有效的 UV
+    function validUV() {
+      var key = 'LeanCloud_UV_Flag';
+      var flag = localStorage.getItem(key);
+      if (flag) {
+        // 距离标记小于 24 小时则不计为 UV
+        if (new Date().getTime() - parseInt(flag) <= 86400000) {
+          return false;
+        }
+      }
+      localStorage.setItem(key, new Date().getTime().toString());
+      return true;
+    }
+
+    function addCount(Counter) {
+      var enableIncr = 'true' === 'true' && window.location.hostname !== 'localhost';
+      var getterArr = [];
+      var incrArr = [];
+
+      // 请求 PV 并自增
+      var pvCtn = document.querySelector('#leancloud-site-pv-container');
+      if (pvCtn || enableIncr) {
+        var pvGetter = getRecord(Counter, 'site-pv').then((record) => {
+          incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-pv');
+          if (ele) {
+            ele.innerText = record.time + 1;
+            if (pvCtn) {
+              pvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(pvGetter);
+      }
+
+      // 请求 UV 并自增
+      var uvCtn = document.querySelector('#leancloud-site-uv-container');
+      if (uvCtn || enableIncr) {
+        var uvGetter = getRecord(Counter, 'site-uv').then((record) => {
+          var vuv = validUV();
+          vuv && incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-uv');
+          if (ele) {
+            ele.innerText = record.time + (vuv ? 1 : 0);
+            if (uvCtn) {
+              uvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(uvGetter);
+      }
+
+      // 如果是文章，请求文章的浏览数，并自增
+      if ('true' === 'true') {
+        var viewCtn = document.querySelector('#leancloud-post-views-container');
+        if (viewCtn || enableIncr) {
+          var target = decodeURI('/2022/12/14/KPNG%EF%BC%9A%E4%B8%8B%E4%B8%80%E4%BB%A3Kube-Proxy/');
+          var viewGetter = getRecord(Counter, target).then((record) => {
+            incrArr.push(buildIncrement(record.objectId))
+            if (viewCtn) {
+              var ele = document.querySelector('#leancloud-post-views');
+              if (ele) {
+                ele.innerText = (record.time || 0) + 1;
+                viewCtn.style.display = 'inline';
+              }
+            }
+          });
+          getterArr.push(viewGetter);
+        }
+      }
+
+      // 如果启动计数自增，批量发起自增请求
+      if (enableIncr) {
+        Promise.all(getterArr).then(() => {
+          incrArr.length > 0 && increment(Counter, incrArr);
+        })
+      }
+    }
+
+    var app_id = 'rGBkjlpYFYPq3Mztf0uHkwm2-gzGzoHsz'
+    var app_key = 'IwuJ6qbGLXA8pB3qeHHjuDT3'
+    var server_url = 'https://rgbkjlpy.lc-cn-n1-shared.com'
+
+    function fetchData(api_server) {
+      var Counter = (method, url, data) => {
+        return fetch(`${ api_server }/1.1${ url }`, {
+          method,
+          headers: {
+            'X-LC-Id': app_id,
+            'X-LC-Key': app_key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data)
+        });
+      };
+
+      addCount(Counter);
+    }
+
+    var api_server = app_id.slice(-9) !== '-MdYXbMMI' ? server_url : `https://${ app_id.slice(0, 8).toLowerCase() }.api.lncldglobal.com`;
+
+    if (api_server) {
+      fetchData(api_server);
+    } else {
+      fetch('https://app-router.leancloud.cn/2/route?appId=' + app_id)
+        .then(resp => resp.json())
+        .then(({api_server}) => {
+          fetchData('https://' + api_server);
+        });
+    }
+  })();
+</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>
