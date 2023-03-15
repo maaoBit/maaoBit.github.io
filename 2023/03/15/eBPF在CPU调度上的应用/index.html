@@ -1,0 +1,453 @@
+<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>eBPF在CPU调度上的应用 - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item"><a class="nav-link" href="/about/"><i class="iconfont icon-user-fill"></i> 关于</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">eBPF在CPU调度上的应用</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2023-03-15 14:24" pubdate>2023年3月15日 下午</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 2.9k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 38 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">eBPF在CPU调度上的应用</h1><div class="markdown-body" id="post-body"><p>目前的<a target="_blank" rel="noopener" href="https://ebpf.io/applications/">开源项目</a>中，主要是将eBPF应用在网络、安全、系统观测方面。近些年eBPF技术也开始应用在调度器上，实现调度器的可观察、可编程。本文主要介绍一些eBPF技术在调度器上的应用尝试。</p><a id="more"></a><h2 id="调度器简介"><a href="#调度器简介" class="headerlink" title="调度器简介"></a>调度器简介</h2><p>在Linux中，调度器被抽象为调度类<code>sched_class</code>，调度类中包括了各种调度处理函数，由各种调度算法实现。</p><div class="hljs"><pre><code class="hljs c"><span class="hljs-comment">// kernel/sched/sched.h</span>
+<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">sched_class</span> &#123;</span>
+
+<span class="hljs-meta">#<span class="hljs-meta-keyword">ifdef</span> CONFIG_UCLAMP_TASK</span>
+	<span class="hljs-keyword">int</span> uclamp_enabled;
+<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+	<span class="hljs-comment">// 将进程加入到调度队列中</span>
+	<span class="hljs-keyword">void</span> (*enqueue_task) (struct rq *rq, struct task_struct *p, <span class="hljs-keyword">int</span> flags);
+	<span class="hljs-comment">// 将进程从调度队列中删除</span>
+	<span class="hljs-keyword">void</span> (*dequeue_task) (struct rq *rq, struct task_struct *p, <span class="hljs-keyword">int</span> flags);
+	<span class="hljs-comment">// 当进程主动放弃CPU时调用</span>
+	<span class="hljs-keyword">void</span> (*yield_task)   (struct rq *rq);
+	<span class="hljs-keyword">bool</span> (*yield_to_task)(struct rq *rq, struct task_struct *p);
+
+	<span class="hljs-comment">// 检查当前进程是否可被强占</span>
+	<span class="hljs-keyword">void</span> (*check_preempt_curr)(struct rq *rq, struct task_struct *p, <span class="hljs-keyword">int</span> flags);
+
+	<span class="hljs-comment">// 从调度类中选出下一个要运行的进程</span>
+	<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">task_struct</span> *(*<span class="hljs-title">pick_next_task</span>)(<span class="hljs-title">struct</span> <span class="hljs-title">rq</span> *<span class="hljs-title">rq</span>);</span>
+
+	<span class="hljs-comment">// 将进程放回运行队列</span>
+	<span class="hljs-keyword">void</span> (*put_prev_task)(struct rq *rq, struct task_struct *p);
+	<span class="hljs-comment">// 选择下一个进程</span>
+	<span class="hljs-keyword">void</span> (*set_next_task)(struct rq *rq, struct task_struct *p, <span class="hljs-keyword">bool</span> first);
+
+<span class="hljs-meta">#<span class="hljs-meta-keyword">ifdef</span> CONFIG_SMP</span>
+	<span class="hljs-comment">// SMP负载均衡</span>
+	<span class="hljs-keyword">int</span> (*balance)(struct rq *rq, struct task_struct *prev, struct rq_flags *rf);
+	<span class="hljs-comment">// 为进程选择一个适合的CPU</span>
+	<span class="hljs-keyword">int</span>  (*select_task_rq)(struct task_struct *p, <span class="hljs-keyword">int</span> task_cpu, <span class="hljs-keyword">int</span> flags);
+
+	<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">task_struct</span> * (*<span class="hljs-title">pick_task</span>)(<span class="hljs-title">struct</span> <span class="hljs-title">rq</span> *<span class="hljs-title">rq</span>);</span>
+
+	<span class="hljs-comment">// 迁移到另外的CPU调度队列中</span>
+	<span class="hljs-keyword">void</span> (*migrate_task_rq)(struct task_struct *p, <span class="hljs-keyword">int</span> new_cpu);
+
+	<span class="hljs-comment">// 用于进程唤醒</span>
+	<span class="hljs-keyword">void</span> (*task_woken)(struct rq *this_rq, struct task_struct *task);
+	<span class="hljs-comment">// 修改进程CPU亲和性</span>
+	<span class="hljs-keyword">void</span> (*set_cpus_allowed)(struct task_struct *p, struct affinity_context *ctx);
+	<span class="hljs-comment">// 启动、关闭运行队列</span>
+	<span class="hljs-keyword">void</span> (*rq_online)(struct rq *rq);
+	<span class="hljs-keyword">void</span> (*rq_offline)(struct rq *rq);
+
+	<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">rq</span> *(*<span class="hljs-title">find_lock_rq</span>)(<span class="hljs-title">struct</span> <span class="hljs-title">task_struct</span> *<span class="hljs-title">p</span>, <span class="hljs-title">struct</span> <span class="hljs-title">rq</span> *<span class="hljs-title">rq</span>);</span>
+<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+
+	<span class="hljs-comment">// 由time_tick调用。它可能引起进程切换，驱动运行时（running）抢占</span>
+	<span class="hljs-keyword">void</span> (*task_tick)(struct rq *rq, struct task_struct *p, <span class="hljs-keyword">int</span> queued);
+	<span class="hljs-comment">// 在进程创建时调用</span>
+	<span class="hljs-keyword">void</span> (*task_fork)(struct task_struct *p);
+	<span class="hljs-comment">// 在进程退出时调用</span>
+	<span class="hljs-keyword">void</span> (*task_dead)(struct task_struct *p);
+
+	<span class="hljs-comment">/*</span>
+<span class="hljs-comment">	 * The switched_from() call is allowed to drop rq-&gt;lock, therefore we</span>
+<span class="hljs-comment">	 * cannot assume the switched_from/switched_to pair is serialized by</span>
+<span class="hljs-comment">	 * rq-&gt;lock. They are however serialized by p-&gt;pi_lock.</span>
+<span class="hljs-comment">	 */</span>
+	 <span class="hljs-comment">// 用于进程切换</span>
+	<span class="hljs-keyword">void</span> (*switched_from)(struct rq *this_rq, struct task_struct *task);
+	<span class="hljs-keyword">void</span> (*switched_to)  (struct rq *this_rq, struct task_struct *task);
+	<span class="hljs-comment">// 改变进程优先级</span>
+	<span class="hljs-keyword">void</span> (*prio_changed) (struct rq *this_rq, struct task_struct *task,
+			      <span class="hljs-keyword">int</span> oldprio);
+
+	<span class="hljs-function"><span class="hljs-keyword">unsigned</span> <span class="hljs-title">int</span> <span class="hljs-params">(*get_rr_interval)</span><span class="hljs-params">(struct rq *rq,</span></span>
+<span class="hljs-function"><span class="hljs-params">					struct task_struct *task)</span></span>;
+	<span class="hljs-comment">// 更新进程调度信息，比如cfs的vruntime</span>
+	<span class="hljs-keyword">void</span> (*update_curr)(struct rq *rq);
+
+<span class="hljs-meta">#<span class="hljs-meta-keyword">ifdef</span> CONFIG_FAIR_GROUP_SCHED</span>
+	<span class="hljs-keyword">void</span> (*task_change_group)(struct task_struct *p);
+<span class="hljs-meta">#<span class="hljs-meta-keyword">endif</span></span>
+&#125;;</code></pre></div><p>一般系统调度发生在调用<code>cond_resched()</code>、调用<code>schedule()</code>、从系统调用或中断返回时。在系统创建调用器时，会初始化一个调度定时器，定时器每隔一段时间执行一次中断，判断任务是否要调度，并设置标志位，在中断结束后，由调度算法进行调度。在Linux对于普通进程的调度器是基于红黑树的CFS调度算法。</p><h2 id="BPF-PROG-TYPE-SCHED类型的BPF程序"><a href="#BPF-PROG-TYPE-SCHED类型的BPF程序" class="headerlink" title="BPF_PROG_TYPE_SCHED类型的BPF程序"></a><code>BPF_PROG_TYPE_SCHED</code>类型的BPF程序</h2><p>Roman Gushchin提交的patchset引入了一种新的<code>BPF_PROG_TYPE_SCHED</code>类型的BPF程序，对CFS调度类插入了三个hook：</p><ul><li><p><code>cfs_check_preempt_tick</code>：，在处理调度定时器tick时调用，attach此处的eBPF程序可以查看哪个进程正在运行。当eBPF返回值小于0时，表示该进程可以继续执行，防止其被抢占；当eBPF返回值大于0时，表示该进程需要被切换，由cfs选择新的进程进行抢占；当eBPF返回0时，eBPF不影响调度。</p><div class="hljs"><pre><code class="hljs c"><span class="hljs-comment">// hook点在`kernel/sched/fair.c`的`check_preempt_tick()`中</span>
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span>
+check_preempt_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr)
+&#123;
+ ...
+ 	ideal_runtime = sched_slice(cfs_rq, curr);
+ 	delta_exec = curr-&gt;sum_exec_runtime - curr-&gt;prev_sum_exec_runtime;
+
+	<span class="hljs-keyword">if</span> (bpf_sched_enabled()) &#123;
+		<span class="hljs-keyword">int</span> ret = bpf_sched_cfs_check_preempt_tick(curr, delta_exec);
+
+		<span class="hljs-keyword">if</span> (ret &lt; <span class="hljs-number">0</span>)
+			<span class="hljs-keyword">return</span>;
+		<span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (ret &gt; <span class="hljs-number">0</span>)
+			resched_curr(rq_of(cfs_rq));
+	&#125;
+...
+&#125;</code></pre></div></li><li><p><code>cfs_check_preempt_wakeup</code>在进程被内核唤醒时被调用。当eBPF返回负值时，将阻止该进程抢占正在运行的进程；返回正值，则进行强制抢占；返回0则不影响，留给后续调度算法决定。</p><div class="hljs"><pre><code class="hljs c"><span class="hljs-comment">// hook点在`kernel/sched/fair.c`的`check_preempt_wakeup()`中</span>
+<span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-keyword">void</span> <span class="hljs-title">check_preempt_wakeup</span><span class="hljs-params">(struct rq *rq, struct task_struct *p, <span class="hljs-keyword">int</span> wake_flags)</span></span>
+<span class="hljs-function"></span>&#123;
+...
+	<span class="hljs-comment">/* Idle tasks are by definition preempted by non-idle tasks. */</span>
+	<span class="hljs-keyword">if</span> (unlikely(task_has_idle_policy(curr)) &amp;&amp;
+	    likely(!task_has_idle_policy(p)))
+		<span class="hljs-keyword">goto</span> preempt;
+ 
+	<span class="hljs-keyword">if</span> (bpf_sched_enabled()) &#123;
+		<span class="hljs-keyword">int</span> ret = bpf_sched_cfs_check_preempt_wakeup(current, p);
+
+		<span class="hljs-keyword">if</span> (ret &lt; <span class="hljs-number">0</span>)
+			<span class="hljs-keyword">return</span>;
+		<span class="hljs-keyword">else</span> <span class="hljs-keyword">if</span> (ret &gt; <span class="hljs-number">0</span>)
+			<span class="hljs-keyword">goto</span> preempt;
+	&#125;
+...
+&#125;</code></pre></div></li><li><p><code>cfs_wakeup_preempt_entity</code>与<code>cfs_check_preempt_wakeup</code>类似，在新的进程被选中运行时调用，返回值为负数表示不执行抢占，返回值为正式表示强制抢占，返回0不影响。</p><div class="hljs"><pre><code class="hljs c"><span class="hljs-comment">// hook点在`kernel/sched/fair.c`的`wakeup_preempt_entity()`中</span>
+<span class="hljs-keyword">static</span> <span class="hljs-keyword">int</span>
+wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se)
+ &#123;
+ 	s64 gran, vdiff = curr-&gt;vruntime - se-&gt;vruntime;
+ 
+	<span class="hljs-keyword">if</span> (bpf_sched_enabled()) &#123;
+		<span class="hljs-keyword">int</span> ret = bpf_sched_cfs_wakeup_preempt_entity(curr, se);
+
+		<span class="hljs-keyword">if</span> (ret)
+			<span class="hljs-keyword">return</span> ret;
+	&#125;
+
+ 	<span class="hljs-keyword">if</span> (vdiff &lt;= <span class="hljs-number">0</span>)
+ 		<span class="hljs-keyword">return</span> <span class="hljs-number">-1</span>;
+...
+&#125;</code></pre></div></li></ul><p>通过这种对CFS调度器加hook，使用BPF影响CPU调度的方式，Facebook在主网页上获得了很好的延迟以及1%RPS提升。详见<a target="_blank" rel="noopener" href="https://www.phoronix.com/scan.php?page=news_item&px=Linux-BPF-Scheduler">Early Patches Bring BPF To The Linux Scheduler</a>、<a target="_blank" rel="noopener" href="https://lwn.net/Articles/873244">LWN: Controlling the CPU scheduler with BPF</a>。</p><h2 id="sched-ext调度类"><a href="#sched-ext调度类" class="headerlink" title="sched_ext调度类"></a><code>sched_ext</code>调度类</h2><p>内核中，一般会用一个C结构体包含一组函数指针的方式，抽象一些实现，比如上面的<code>sched_class</code>。eBPF的<code>struct_ops</code>特性允许通过BPF程序实现内核里的这种结构体，来实现额外功能。最初<code>struct_ops</code>是用在TCP的拥塞控制上，而目前也用于实现调度算法的扩展上。</p><p><a target="_blank" rel="noopener" href="https://github.com/htejun/sched_ext"><code>sched_ext</code></a>项目实现了一个<code>sched_ext</code>调度类（简称为SCX），使用<code>struct sched_ext_ops</code>定义了一组调度处理的函数，eBPF程序通过实现<code>struct sched_ext_ops</code>中的函数来实现调度算法。以下方法中只有<code>name</code>不能为空，其他的都是可选。</p><div class="hljs"><pre><code class="hljs c"><span class="hljs-comment">// include/linux/sched/ext.h</span>
+<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">sched_ext_ops</span> &#123;</span>
+	<span class="hljs-comment">/* 为被唤醒的进程选择CPU */</span>
+	s32 (*select_cpu)(struct task_struct *p, s32 prev_cpu, u64 wake_flags);
+
+	<span class="hljs-comment">/* 将进程加入调度队列 */</span>
+	<span class="hljs-keyword">void</span> (*enqueue)(struct task_struct *p, u64 enq_flags);
+
+	<span class="hljs-comment">/* 将进程从调度队列中删除 */</span>
+	<span class="hljs-keyword">void</span> (*dequeue)(struct task_struct *p, u64 deq_flags);
+
+	<span class="hljs-comment">/* 分配调度任务 */</span>
+	<span class="hljs-keyword">void</span> (*dispatch)(s32 cpu, struct task_struct *prev);
+
+	<span class="hljs-comment">/* 任务在CPU上变为runnable，与下面三个方法一起，用于跟踪任务的状态转变。任务会依次经过runable，多次的running、stopping，然后完成执行，变为quiescent*/</span>
+	<span class="hljs-keyword">void</span> (*runnable)(struct task_struct *p, u64 enq_flags);
+	<span class="hljs-keyword">void</span> (*running)(struct task_struct *p);
+	<span class="hljs-keyword">void</span> (*stopping)(struct task_struct *p, <span class="hljs-keyword">bool</span> runnable);
+	<span class="hljs-keyword">void</span> (*quiescent)(struct task_struct *p, u64 deq_flags);
+
+	<span class="hljs-comment">/* yield 让出CPU，to是可选的 */</span>
+	<span class="hljs-keyword">bool</span> (*yield)(struct task_struct *from, struct task_struct *to);
+
+	<span class="hljs-comment">/* Core scheduling的任务排序 */</span>
+	<span class="hljs-keyword">bool</span> (*core_sched_before)(struct task_struct *a, struct task_struct *b);
+
+	<span class="hljs-comment">/* 配置cpu亲和性 */</span>
+	<span class="hljs-keyword">void</span> (*set_cpumask)(struct task_struct *p, struct cpumask *cpumask);
+
+	<span class="hljs-comment">/* cpu空闲状态变化时调用 */</span>
+	<span class="hljs-keyword">void</span> (*update_idle)(s32 cpu, <span class="hljs-keyword">bool</span> idle);
+
+	<span class="hljs-comment">/* 当cpu重新对BPF调度器可用时调用。和下面的cpu_release是一对，cpu_release是当cpu对BPF调度器不可用时调用,一般出现在更高等级的sched_class对cpu的抢占的情况 */</span>
+	<span class="hljs-keyword">void</span> (*cpu_acquire)(s32 cpu, struct scx_cpu_acquire_args *args);
+	<span class="hljs-keyword">void</span> (*cpu_release)(s32 cpu, struct scx_cpu_release_args *args);
+
+	<span class="hljs-comment">/* cpu上、下线时调用 */</span>
+	<span class="hljs-keyword">void</span> (*cpu_online)(s32 cpu);
+	<span class="hljs-keyword">void</span> (*cpu_offline)(s32 cpu);
+
+	<span class="hljs-comment">/* 从task进入BPF调度器，到退出BPF调度器的一些操作 */</span>
+	s32 (*prep_enable)(struct task_struct *p, struct scx_enable_args *args);
+	<span class="hljs-keyword">void</span> (*enable)(struct task_struct *p, struct scx_enable_args *args);
+	<span class="hljs-keyword">void</span> (*cancel_enable)(struct task_struct *p,
+			      struct scx_enable_args *args);
+	<span class="hljs-keyword">void</span> (*disable)(struct task_struct *p);
+
+	<span class="hljs-comment">/* cgroup相关的操作触发的调度逻辑 */</span>
+	s32 (*cgroup_init)(struct cgroup *cgrp,
+			   struct scx_cgroup_init_args *args);
+	<span class="hljs-keyword">void</span> (*cgroup_exit)(struct cgroup *cgrp);
+	s32 (*cgroup_prep_move)(struct task_struct *p,
+				struct cgroup *from, struct cgroup *to);
+	<span class="hljs-keyword">void</span> (*cgroup_move)(struct task_struct *p,
+			    struct cgroup *from, struct cgroup *to);
+	<span class="hljs-keyword">void</span> (*cgroup_cancel_move)(struct task_struct *p,
+				   struct cgroup *from, struct cgroup *to);
+	<span class="hljs-keyword">void</span> (*cgroup_set_weight)(struct cgroup *cgrp, u32 weight);
+
+	<span class="hljs-comment">// BPF调度器初始化/退出的逻辑</span>
+	s32 (*init)(<span class="hljs-keyword">void</span>);
+	<span class="hljs-keyword">void</span> (*<span class="hljs-built_in">exit</span>)(struct scx_exit_info *info);
+
+	<span class="hljs-comment">/* dispatch()可分配的最大任务数 */</span>
+	u32 dispatch_max_batch;
+	u64 flags;
+	u32 timeout_ms;
+	<span class="hljs-keyword">char</span> name[SCX_OPS_NAME_LEN];
+&#125;;</code></pre></div><p><code>sched_ext</code>调度类的调度过程为：</p><p>1）当任务被唤醒，调用<code>ops.select_cpu()</code>获取cpu选择（并不是最终调度到的CPU），如果cpu在idle状态，则同时唤醒cpu。</p><p>2）一旦CPU被选中，调用<code>ops.enqueue()</code>入队。</p><blockquote><p><code>sched_ext</code>使用简单的FIFO队列，<code>sched_ext</code>中称为DSQ，队列分为两类：一类是全局队列<code>SCX_DSQ_GLOBAL</code>；一类是per-cpu的本地队列<code>SCX_DSQ_LOCAL</code>。默认情况下有一个<code>SCX_DSQ_GLOBAL</code>，每个cpu有一个<code>SCX_DSQ_LOCAL</code>。也可以通过<code>scx_bpf_create_dsq()</code>与<code>scx_bpf_destroy_dsq()</code>创建自定义的队列。<br><code>ops.enqueue</code>可以立即将任务通过helper函数<code>scx_bpf_dispatch()</code>加入到<code>SCX_DSQ_GLOBAL</code>或<code>SCX_DSQ_LOCAL</code>；也可以通过指定DSQ的ID，将其加入到自定义的队列中；或者是在BPF程序中进行排队（下面的<code>qmap</code>例子中就是这种情况）。</p></blockquote><p>3）当CPU准备好进行调度，会先从它的<code>SCX_DSQ_LOCAL</code>中获取任务，如果<code>SCX_DSQ_LOCAL</code>为空，则从<code>SCX_DSQ_GLOBAL</code>中获取任务。如果还是没有可执行的任务，就会调用<code>ops.dispatch()</code>。<code>ops.dispatch()</code>可以使用如下的helper函数，为local DSQ生成任务：</p><ul><li><code>scx_bpf_dispatch()</code>将一个任务分配到DSQ中，可以是任意的DSQ（<code>SCX_DSQ_LOCAL</code>, <code>SCX_DSQ_LOCAL_ON | cpu</code>, <code>SCX_DSQ_GLOBAL</code>或者自定义DSQ）。任务的分配不是立即生效的，最多会有<code>ops.dispatch_max_batch</code>个待分配的任务。</li><li><code>scx_bpf_consume()</code> 将一个任务从non-local DSQ转移到调度的DSQ中。</li></ul><p>4）调用<code>ops.dispatch()</code>后，如果<code>SCX_DSQ_LOCAL</code>中存在任务，则运行。如果为空，则依次执行：</p><ul><li>从<code>SCX_DSQ_GLOBAL</code>中获取任务</li><li>如果<code>ops.dispatch()</code>已经进行相应的分配，则重复步骤3</li><li>如果之前的任务为SCX的任务，且可运行，则运行之前的任务</li><li>idle</li></ul><p><code>tools/sched_ext/</code>下有大量用例，其中<code>scx_example_qmap[.bpf].c</code>使用<code>BPF_MAP_TYPE_QUEUE</code>实现了五个FIFO的调度，按照“先调度1个queue0上的任务，再调度2个queue1上的任务，再调度4个queue2上的任务，依次类推”的方式进行调度，下面介绍下是如何实现的。</p><ul><li><p>当进程被唤醒时，调用<code>enqueue()</code>将进程加入ebpf map中排队</p><div class="hljs"><pre><code class="hljs c"><span class="hljs-comment">// qmap的enqueue实现</span>
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">BPF_STRUCT_OPS</span><span class="hljs-params">(qmap_enqueue, struct task_struct *p, u64 enq_flags)</span></span>
+<span class="hljs-function"></span>&#123;
+	<span class="hljs-keyword">static</span> u32 user_cnt, kernel_cnt;
+	<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">task_ctx</span> *<span class="hljs-title">tctx</span>;</span>
+	u32 pid = p-&gt;pid;
+	<span class="hljs-comment">// 进程的scx权重，亦是fifo队列的序号</span>
+	<span class="hljs-keyword">int</span> idx = weight_to_idx(p-&gt;scx.weight);
+	<span class="hljs-keyword">void</span> *ring;
+	
+	...
+
+	<span class="hljs-comment">// queue_arr是一个BPF_MAP_TYPE_ARRAY_OF_MAPS类型的map，存储了5个BPF_MAP_TYPE_QUEUE，作为5个fifo调度队列</span>
+	ring = bpf_map_lookup_elem(&amp;queue_arr, &amp;idx);
+	<span class="hljs-keyword">if</span> (!ring) &#123;
+		scx_bpf_error(<span class="hljs-string">&quot;failed to find ring %d&quot;</span>, idx);
+		<span class="hljs-keyword">return</span>;
+	&#125;
+
+	<span class="hljs-comment">// 将任务push到fifo队列中，如果队列满了，就直接扔到SCX_DSQ_GLOBAL中</span>
+	<span class="hljs-keyword">if</span> (bpf_map_push_elem(ring, &amp;pid, <span class="hljs-number">0</span>)) &#123;
+		scx_bpf_dispatch(p, SCX_DSQ_GLOBAL, slice_ns, enq_flags);
+		<span class="hljs-keyword">return</span>;
+	&#125;
+
+	__sync_fetch_and_add(&amp;nr_enqueued, <span class="hljs-number">1</span>);
+&#125;</code></pre></div></li><li><p>当CPU从<code>SCX_DSQ_LOCAL</code>、<code>SCX_DSQ_GLOBAL</code>获取不到任务后，调用<code>dispatch()</code>重新获取任务</p></li></ul><div class="hljs"><pre><code class="hljs c"><span class="hljs-comment">// qmap的dispatch实现</span>
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">BPF_STRUCT_OPS</span><span class="hljs-params">(qmap_dispatch, s32 cpu, struct task_struct *prev)</span></span>
+<span class="hljs-function"></span>&#123;
+	...
+	<span class="hljs-comment">// idx是fifo的序号，cnt记录对应fifo还能调度多少个任务，两者保存在BPF_MAP_TYPE_PERCPU_ARRAY中</span>
+	u64 *idx = bpf_map_lookup_elem(&amp;dispatch_idx_cnt, &amp;zero);
+	u64 *cnt = bpf_map_lookup_elem(&amp;dispatch_idx_cnt, &amp;one);
+	...
+
+	<span class="hljs-comment">// 循环5个fifo，获取需要调度的任务</span>
+	<span class="hljs-keyword">for</span> (i = <span class="hljs-number">0</span>; i &lt; <span class="hljs-number">5</span>; i++) &#123;
+		<span class="hljs-comment">// cnt非正，则继续调度下一个fifo</span>
+		<span class="hljs-keyword">if</span> (!*cnt) &#123;
+			*idx = (*idx + <span class="hljs-number">1</span>) % <span class="hljs-number">5</span>;
+			*cnt = <span class="hljs-number">1</span> &lt;&lt; *idx;
+		&#125;
+		(*cnt)--;
+
+		<span class="hljs-comment">// 查找到对应的fifo</span>
+		fifo = bpf_map_lookup_elem(&amp;queue_arr, idx);
+		<span class="hljs-keyword">if</span> (!fifo) &#123;
+			scx_bpf_error(<span class="hljs-string">&quot;failed to find ring %llu&quot;</span>, *idx);
+			<span class="hljs-keyword">return</span>;
+		&#125;
+
+		<span class="hljs-comment">// 从fifo中获取对应的任务pid</span>
+		<span class="hljs-keyword">if</span> (!bpf_map_pop_elem(fifo, &amp;pid)) &#123;
+			<span class="hljs-class"><span class="hljs-keyword">struct</span> <span class="hljs-title">task_struct</span> *<span class="hljs-title">p</span>;</span>
+
+			<span class="hljs-comment">// bpf_task_from_pid是一个helper函数，根据pid获取对应的task_struct，获取到就进行调度，否则尝试下一个fifo</span>
+			p = bpf_task_from_pid(pid);
+			<span class="hljs-keyword">if</span> (p) &#123;
+				update_core_sched_head_seq(p);
+				__sync_fetch_and_add(&amp;nr_dispatched, <span class="hljs-number">1</span>);
+				<span class="hljs-comment">// 通过helper函数scx_bpf_dispatch，将任务推到SCX_DSQ_GLOBAL调度队列中，后续待CPU调度完SCX_DSQ_LOCAL后，从中拿出运行</span>
+				scx_bpf_dispatch(p, SCX_DSQ_GLOBAL, slice_ns, <span class="hljs-number">0</span>);
+				<span class="hljs-comment">// 释放task_struct的引用</span>
+				bpf_task_release(p);
+				<span class="hljs-keyword">return</span>;
+			&#125;
+		&#125;
+
+		*cnt = <span class="hljs-number">0</span>;
+	&#125;
+&#125;</code></pre></div><p><code>qmap</code>实现的功能不止这些，还实现了core-sched的支持、高优先级调度类的抢占、对每第n个任务进行暂停等，在<code>scx_example_qmap.bpf.c</code>的头部注释里有介绍，实现在其他的<code>struct sched_ext_ops</code>方法中。</p><h2 id="其他"><a href="#其他" class="headerlink" title="其他"></a>其他</h2><p>在LCP 2021，Google有分享过<a target="_blank" rel="noopener" href="https://lpc.events/event/11/contributions/954/attachments/776/1463/eBPF%20in%20CPU%20Scheduler.pdf">eBPF in CPU Scheduler</a>。主要包括三方面：</p><p>1、通过对<code>sched_switch</code>与<code>sched_wakeup</code>的Trace，来获取调度延迟数据，并指导调度<br>2、Core scheduling中为防止Cross-HT attack，会进行forced idle。通过eBPF统计forced idle的时间。<br>3、针对Google自己的调度系统<a target="_blank" rel="noopener" href="https://github.com/google/ghost-kernel"><code>ghOST</code></a>，通过eBPF减少调度延迟。<code>ghOST</code>的目标与<code>sched_ext</code>类似，也是提供一种可开发、易部署的调度器开发框架，但<code>ghOST</code>将调度代码运行在用户空间，而非内核空间。</p><p>除此外，在在离线混部的场景下，也能通过eBPF监控调度，检测应用的干扰。比如阿里的开源混部项目<code>koordinator</code>也有这样的<a target="_blank" rel="noopener" href="https://github.com/koordinator-sh/koordinator/blob/main/docs/proposals/20221205-cpu-schedule-latency.md">方案</a>。</p></div><hr><div><div class="post-metas mb-3"><div class="post-meta mr-3"><i class="iconfont icon-category"></i> <a class="hover-with-bg" href="/categories/linux/">linux</a></div><div class="post-meta"><i class="iconfont icon-tags"></i> <a class="hover-with-bg" href="/tags/BPF/">BPF</a></div></div><p class="note note-warning">转载请注明出处</p><div class="post-prevnext row"><article class="post-prev col-6"></article><article class="post-next col-6"> <a href="/2022/12/14/KPNG%EF%BC%9A%E4%B8%8B%E4%B8%80%E4%BB%A3Kube-Proxy/"><span class="hidden-mobile">KPNG：下一代Kube-Proxy</span> <span class="visible-mobile">下一篇</span><i class="iconfont icon-arrowright"></i></a></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
+  (function () {
+    // 查询存储的记录
+    function getRecord(Counter, target) {
+      return new Promise(function (resolve, reject) {
+        Counter('get', '/classes/Counter?where=' + encodeURIComponent(JSON.stringify({target})))
+          .then(resp => resp.json())
+          .then(({results, code, error}) => {
+            if (code === 401) {
+              throw error;
+            }
+            if (results && results.length > 0) {
+              var record = results[0];
+              resolve(record);
+            } else {
+              Counter('post', '/classes/Counter', {target, time: 0})
+                .then(resp => resp.json())
+                .then((record, error) => {
+                  if (error) {
+                    throw error;
+                  }
+                  resolve(record);
+                }).catch(error => {
+                console.error('Failed to create', error);
+                reject(error);
+              });
+            }
+          }).catch((error) => {
+          console.error('LeanCloud Counter Error:', error);
+          reject(error);
+        });
+      })
+    }
+
+    // 发起自增请求
+    function increment(Counter, incrArr) {
+      return new Promise(function (resolve, reject) {
+        Counter('post', '/batch', {
+          "requests": incrArr
+        }).then((res) => {
+          res = res.json();
+          if (res.error) {
+            throw res.error;
+          }
+          resolve(res);
+        }).catch((error) => {
+          console.error('Failed to save visitor count', error);
+          reject(error);
+        });
+      });
+    }
+
+    // 构建自增请求体
+    function buildIncrement(objectId) {
+      return {
+        "method": "PUT",
+        "path": `/1.1/classes/Counter/${ objectId }`,
+        "body": {
+          "time": {
+            '__op': 'Increment',
+            'amount': 1
+          }
+        }
+      }
+    }
+
+    // 校验是否为有效的 UV
+    function validUV() {
+      var key = 'LeanCloud_UV_Flag';
+      var flag = localStorage.getItem(key);
+      if (flag) {
+        // 距离标记小于 24 小时则不计为 UV
+        if (new Date().getTime() - parseInt(flag) <= 86400000) {
+          return false;
+        }
+      }
+      localStorage.setItem(key, new Date().getTime().toString());
+      return true;
+    }
+
+    function addCount(Counter) {
+      var enableIncr = 'true' === 'true' && window.location.hostname !== 'localhost';
+      var getterArr = [];
+      var incrArr = [];
+
+      // 请求 PV 并自增
+      var pvCtn = document.querySelector('#leancloud-site-pv-container');
+      if (pvCtn || enableIncr) {
+        var pvGetter = getRecord(Counter, 'site-pv').then((record) => {
+          incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-pv');
+          if (ele) {
+            ele.innerText = record.time + 1;
+            if (pvCtn) {
+              pvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(pvGetter);
+      }
+
+      // 请求 UV 并自增
+      var uvCtn = document.querySelector('#leancloud-site-uv-container');
+      if (uvCtn || enableIncr) {
+        var uvGetter = getRecord(Counter, 'site-uv').then((record) => {
+          var vuv = validUV();
+          vuv && incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-uv');
+          if (ele) {
+            ele.innerText = record.time + (vuv ? 1 : 0);
+            if (uvCtn) {
+              uvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(uvGetter);
+      }
+
+      // 如果是文章，请求文章的浏览数，并自增
+      if ('true' === 'true') {
+        var viewCtn = document.querySelector('#leancloud-post-views-container');
+        if (viewCtn || enableIncr) {
+          var target = decodeURI('/2023/03/15/eBPF%E5%9C%A8CPU%E8%B0%83%E5%BA%A6%E4%B8%8A%E7%9A%84%E5%BA%94%E7%94%A8/');
+          var viewGetter = getRecord(Counter, target).then((record) => {
+            incrArr.push(buildIncrement(record.objectId))
+            if (viewCtn) {
+              var ele = document.querySelector('#leancloud-post-views');
+              if (ele) {
+                ele.innerText = (record.time || 0) + 1;
+                viewCtn.style.display = 'inline';
+              }
+            }
+          });
+          getterArr.push(viewGetter);
+        }
+      }
+
+      // 如果启动计数自增，批量发起自增请求
+      if (enableIncr) {
+        Promise.all(getterArr).then(() => {
+          incrArr.length > 0 && increment(Counter, incrArr);
+        })
+      }
+    }
+
+    var app_id = 'rGBkjlpYFYPq3Mztf0uHkwm2-gzGzoHsz'
+    var app_key = 'IwuJ6qbGLXA8pB3qeHHjuDT3'
+    var server_url = 'https://rgbkjlpy.lc-cn-n1-shared.com'
+
+    function fetchData(api_server) {
+      var Counter = (method, url, data) => {
+        return fetch(`${ api_server }/1.1${ url }`, {
+          method,
+          headers: {
+            'X-LC-Id': app_id,
+            'X-LC-Key': app_key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data)
+        });
+      };
+
+      addCount(Counter);
+    }
+
+    var api_server = app_id.slice(-9) !== '-MdYXbMMI' ? server_url : `https://${ app_id.slice(0, 8).toLowerCase() }.api.lncldglobal.com`;
+
+    if (api_server) {
+      fetchData(api_server);
+    } else {
+      fetch('https://app-router.leancloud.cn/2/route?appId=' + app_id)
+        .then(resp => resp.json())
+        .then(({api_server}) => {
+          fetchData('https://' + api_server);
+        });
+    }
+  })();
+</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>
