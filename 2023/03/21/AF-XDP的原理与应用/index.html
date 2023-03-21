@@ -1,0 +1,302 @@
+<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>AF_XDP的原理与应用 - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item"><a class="nav-link" href="/about/"><i class="iconfont icon-user-fill"></i> 关于</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">AF_XDP的原理与应用</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2023-03-21 18:06" pubdate>2023年3月21日 晚上</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 1.8k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 24 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">AF_XDP的原理与应用</h1><div class="markdown-body" id="post-body"><p>AF_XDP是一个协议族，能将DMA缓冲区映射到用户空间，实现zero-copy，用于高性能的数据包处理。</p><a id="more"></a><h2 id="XDP"><a href="#XDP" class="headerlink" title="XDP"></a>XDP</h2><p>XDP能在数据包进入协议栈之前就进行处理，根据XDP hook的位置不同，分为：</p><ul><li>Native XDP：在网卡驱动的接收路径中，需要网卡驱动的支持，比如<code>ixgbe</code>驱动的软中断处理中调用。</li><li>Offloaded XDP：不再通过CPU执行XDP程序，而是在网卡中执行XDP程序，由JIT将XDP程序编译成网卡（一般是智能网卡）可运行的指令码，卸载到网卡上。</li><li>Generic XDP：针对不支持Native XDP与Offloaded XDP的情况，提供的一种模式。在内核协议栈中运行。</li></ul><p>XDP对数据包的处理结果（Action）包括DROP、PASS、TX或REDIRECT。其中TX是将数据包从接收网卡中转发出去，REDIRECT是根据BPF MAP进行重定向，可以将数据包从其他网卡中转发出去，也可以将数据包重定向到AF_XDP socket中。</p><h2 id="AF-XDP的实现"><a href="#AF-XDP的实现" class="headerlink" title="AF_XDP的实现"></a>AF_XDP的实现</h2><p>AF_XDP的应用分为用户空间与内核空间两部分逻辑。在用户空间使用<code>socket()</code>系统调用创建一个AF_XDP套接字（XSK），用于应用接受、发送数据包；在内核空间利用XDP的<code>bpf_redirect_map()</code>，将数据包重定向到用户态中（可以通过XDP程序，决定哪些数据包走AF_XDP，哪些数据包走内核协议栈），实现数据包的高性能处理（跳过内核协议栈、sk_buff的创建）。</p><p>![[Pasted image 20230320153259.png]]<br>图来自（<a target="_blank" rel="noopener" href="https://medium.com/high-performance-network-programming/recapitulating-af-xdp-ef6c1ebead8%EF%BC%89">https://medium.com/high-performance-network-programming/recapitulating-af-xdp-ef6c1ebead8）</a></p><p>具体的，内核空间与用户空间共享一片内存区域，称为UMEM，UMEM划分为许多个chunk，使用chunk存储数据包。内核与用户空间的应用通过<code>RX RING</code>、<code>TX RING</code>、<code>FILL RING</code>、<code>COMPLETION RING</code>四个ring来操作UMEM，ring中的元素（称为desc）存储了指向UMEM某个chunk的addr。</p><p>![[Pasted image 20230320162356.png]]<br>图来自（<a target="_blank" rel="noopener" href="https://rexrock.github.io/post/af_xdp1/%EF%BC%89">https://rexrock.github.io/post/af_xdp1/）</a></p><ul><li><code>RX RING</code>：存储待XSK处理接收的数据包。<strong>内核为生产者，XSK为消费者</strong>。内核消费<code>FILL RING</code>，将数据包拷贝到<code>FILL RING</code>的desc指向的UMEM chunk中，然后将desc填充到<code>RX RING</code></li><li><code>TX RING</code>：存储待内核发送的数据包。<strong>XSK为生产者，内核为消费者</strong>。XSK消费<code>COMPLETION RING</code>，将要发送的数据包拷贝到<code>COMPLETION RING</code>的desc指向的UMEM chunk中，然后将desc填充到<code>TX RING</code>。</li><li><code>FILL RING</code>：存储可以承载数据包的chunk。<strong>XSK为生产者，内核为消费者</strong>。</li><li><code>COMPLETION RING</code>：存储已经发送完成的数据包。<strong>内核为生产者，XSK为消费者</strong>。</li></ul><p>以接收数据包的过程为例，用户态应用先填充<code>FILL RING</code>，等待数据包的接收。内核将接收到的数据包，拷贝到<code>FILL RING</code>中desc的UMEM chunk中，然后填充<code>RX RING</code>。用户态应用从<code>RX RING</code>中获取接收到的数据包，然后将desc填充回<code>FILL RING</code>，供下次内核接收数据包使用。发送数据包的过程类似，为<code>COMPLETION RING</code>、<code>TX RING</code>的配合使用。</p><h2 id="AF-XDP实例"><a href="#AF-XDP实例" class="headerlink" title="AF_XDP实例"></a>AF_XDP实例</h2><p>AF_XDP的实现分用户态程序与XDP程序。用户态程序初始化过程为：</p><ul><li>创建<code>AF_XDP</code> socket</li><li>申请UMEM</li><li>注册UMEM</li><li>创建四个RING</li><li>绑定到指定设备的某一队列</li></ul><p>XDP程序主要是根据BPF_MAP_TYPE_XSKMAP重定向到对应队列的XSK上。</p><p>C语言的实例在<code>samples/bpf/xdpsock_user.c</code>，可以参考<a target="_blank" rel="noopener" href="https://rexrock.github.io/post/af_xdp1/">https://rexrock.github.io/post/af_xdp1/</a> 的分析。</p><p>Go语言的库可以使用<a target="_blank" rel="noopener" href="https://github.com/asavie/xdp">asavie/xdp</a>，封装程度更高，以<code>examples/l2fwd</code>为例：</p><div class="hljs"><pre><code class="hljs go"><span class="hljs-comment">// asavie/xdp/examples/l2fwd/l2fwd.go</span>
+<span class="hljs-comment">// 指定两个网卡，将其中任意一个网卡接收的帧以指定的mac地址，通过另一个网卡转发出去</span>
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">main</span><span class="hljs-params">()</span></span> &#123;  
+   ...
+   forwardL2(verbose, inLink, inLinkQueueID, inLinkDst, outLink, outLinkQueueID, outLinkDst)  
+&#125;
+
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">forwardL2</span><span class="hljs-params">(verbose <span class="hljs-keyword">bool</span>, inLink netlink.Link, inLinkQueueID <span class="hljs-keyword">int</span>, inLinkDst net.HardwareAddr, outLink netlink.Link, outLinkQueueID <span class="hljs-keyword">int</span>, outLinkDst net.HardwareAddr)</span></span> &#123;  
+	...
+   <span class="hljs-comment">// 创建xdp BPF程序，默认的XDP程序为&lt;linux&gt;/tools/lib/bpf/xsk.c下的xsk_load_xdp_prog()，进行简单的转发，也可以自定义xdp程序  </span>
+   <span class="hljs-comment">// This is the C-program:  </span>
+<span class="hljs-comment">// SEC(&quot;xdp_sock&quot;) int xdp_sock_prog(struct xdp_md *ctx)  </span>
+<span class="hljs-comment">// &#123;  </span>
+<span class="hljs-comment">//     int *qidconf, index = ctx-&gt;rx_queue_index;  </span>
+<span class="hljs-comment">//  </span>
+<span class="hljs-comment">//     // A set entry here means that the correspnding queue_id  </span>
+<span class="hljs-comment">//     // has an active AF_XDP socket bound to it.  </span>
+<span class="hljs-comment">//     qidconf = bpf_map_lookup_elem(&amp;qidconf_map, &amp;index);  </span>
+<span class="hljs-comment">//     if (!qidconf)  </span>
+<span class="hljs-comment">//         return XDP_ABORTED;  </span>
+<span class="hljs-comment">//  </span>
+<span class="hljs-comment">//     if (*qidconf)  </span>
+<span class="hljs-comment">//         return bpf_redirect_map(&amp;xsks_map, index, 0);  </span>
+<span class="hljs-comment">//  </span>
+<span class="hljs-comment">//     return XDP_PASS;  </span>
+<span class="hljs-comment">// &#125;</span>
+   inProg, err := xdp.NewProgram(inLinkQueueID + <span class="hljs-number">1</span>)  
+	...
+   <span class="hljs-comment">// 加载到input的网卡上</span>
+   <span class="hljs-keyword">if</span> err := inProg.Attach(inLink.Attrs().Index);
+	...
+   <span class="hljs-comment">// 创建input的XSK，需要指定网卡的队列</span>
+   inXsk, err := xdp.NewSocket(inLink.Attrs().Index, inLinkQueueID, <span class="hljs-literal">nil</span>)  
+	...  
+	<span class="hljs-comment">// 将网卡队列的ID与XSK fd更新到map中，供xdp BPF程序转发</span>
+   <span class="hljs-keyword">if</span> err := inProg.Register(inLinkQueueID, inXsk.FD());
+	...
+   <span class="hljs-comment">// 创建output的XSK，这里可能有问题？因为根据vagrant目录下的测试场景，outXsk仍需要转发回包，而不仅仅是作为output，后面的poll逻辑也说明了是个双向的转发，因此还是需要有bpf pro</span>
+   <span class="hljs-comment">// Note: The XDP socket used for transmitting data does not need an EBPF program.</span>
+   outXsk, err := xdp.NewSocket(outLink.Attrs().Index, outLinkQueueID, <span class="hljs-literal">nil</span>)  
+	...
+	<span class="hljs-comment">// 使用poll监听发送和接收，也可以用xsk的Poll()方法，逻辑一样</span>
+	<span class="hljs-comment">// func (xsk *Socket) Poll(timeout int) (numReceived int, numCompleted int, err error)</span>
+   <span class="hljs-keyword">var</span> fds [<span class="hljs-number">2</span>]unix.PollFd  
+   fds[<span class="hljs-number">0</span>].Fd = <span class="hljs-keyword">int32</span>(inXsk.FD())  
+   fds[<span class="hljs-number">1</span>].Fd = <span class="hljs-keyword">int32</span>(outXsk.FD())  
+   <span class="hljs-keyword">for</span> &#123;  
+	   <span class="hljs-comment">// 先填充两个socket的fill ring。xsk的实现里面，fill ring与rx ring指向的缓存区域在umem的前半部分，complete ring与tx ring指向的缓存区域在umem的后半部分</span>
+      inXsk.Fill(inXsk.GetDescs(inXsk.NumFreeFillSlots(), <span class="hljs-literal">true</span>))  
+      outXsk.Fill(outXsk.GetDescs(outXsk.NumFreeFillSlots(), <span class="hljs-literal">true</span>))  
+
+		<span class="hljs-comment">// 监听socket的读写。NumTransmitted()返回的是通过tx ring进行发送，但未调用Complete()对complete ring进行消费的</span>
+      fds[<span class="hljs-number">0</span>].Events = unix.POLLIN  
+      <span class="hljs-keyword">if</span> inXsk.NumTransmitted() &gt; <span class="hljs-number">0</span> &#123;  
+         fds[<span class="hljs-number">0</span>].Events |= unix.POLLOUT  
+      &#125;  
+  
+      fds[<span class="hljs-number">1</span>].Events = unix.POLLIN  
+      <span class="hljs-keyword">if</span> outXsk.NumTransmitted() &gt; <span class="hljs-number">0</span> &#123;  
+         fds[<span class="hljs-number">1</span>].Events |= unix.POLLOUT  
+      &#125;  
+  
+      fds[<span class="hljs-number">0</span>].Revents = <span class="hljs-number">0</span>  
+      fds[<span class="hljs-number">1</span>].Revents = <span class="hljs-number">0</span>  
+      _, err := unix.Poll(fds[:], <span class="hljs-number">-1</span>)  
+	    ...
+		<span class="hljs-comment">// inXsk收到POLLIN，将inXsk接收的数据发送到outXsk</span>
+      <span class="hljs-keyword">if</span> (fds[<span class="hljs-number">0</span>].Revents &amp; unix.POLLIN) != <span class="hljs-number">0</span> &#123;  
+         numBytes, numFrames := forwardFrames(inXsk, outXsk, inLinkDst)  
+         ...
+      &#125;  
+      <span class="hljs-comment">// inXsk收到POLLOUT，消费complete ring，标记对应的descs为freeTXDescs，以供下次Transmit使用</span>
+      <span class="hljs-keyword">if</span> (fds[<span class="hljs-number">0</span>].Revents &amp; unix.POLLOUT) != <span class="hljs-number">0</span> &#123;  
+         inXsk.Complete(inXsk.NumCompleted())  
+      &#125;  
+      <span class="hljs-comment">// 同上，将outXsk接收的数据发送到inXsk</span>
+      <span class="hljs-keyword">if</span> (fds[<span class="hljs-number">1</span>].Revents &amp; unix.POLLIN) != <span class="hljs-number">0</span> &#123;  
+         numBytes, numFrames := forwardFrames(outXsk, inXsk, outLinkDst)  
+         numBytesTotal += numBytes  
+         numFramesTotal += numFrames  
+      &#125; 
+      <span class="hljs-keyword">if</span> (fds[<span class="hljs-number">1</span>].Revents &amp; unix.POLLOUT) != <span class="hljs-number">0</span> &#123;  
+         outXsk.Complete(outXsk.NumCompleted())  
+      &#125;  
+   &#125;  
+&#125;
+
+<span class="hljs-function"><span class="hljs-keyword">func</span> <span class="hljs-title">forwardFrames</span><span class="hljs-params">(input *xdp.Socket, output *xdp.Socket, dstMac net.HardwareAddr)</span> <span class="hljs-params">(numBytes <span class="hljs-keyword">uint64</span>, numFrames <span class="hljs-keyword">uint64</span>)</span></span> &#123;  
+	<span class="hljs-comment">// 接收</span>
+   inDescs := input.Receive(input.NumReceived())  
+   <span class="hljs-comment">// 替换数据包的mac地址，直接将dstMac拷贝到对应的umem chuck地址上</span>
+   replaceDstMac(input, inDescs, dstMac)  
+	<span class="hljs-comment">// 获取tx ring中空的descs，其实就是在Complete()中标记为freeTXDescs的descs</span>
+   outDescs := output.GetDescs(output.NumFreeTxSlots(), <span class="hljs-literal">false</span>)  
+   <span class="hljs-comment">// tx ring不足，进行rx的截断</span>
+   <span class="hljs-keyword">if</span> <span class="hljs-built_in">len</span>(inDescs) &gt; <span class="hljs-built_in">len</span>(outDescs) &#123;  
+      inDescs = inDescs[:<span class="hljs-built_in">len</span>(outDescs)]  
+   &#125;  
+   numFrames = <span class="hljs-keyword">uint64</span>(<span class="hljs-built_in">len</span>(inDescs))  
+
+	<span class="hljs-comment">// 将inFrame拷贝到outFrame，这里是数据包的拷贝，而非ring中元素的拷贝，因为input、output xsk有各自的umem。如果是一个xsk的接收与发送，则可以直接修改descs即可</span>
+   <span class="hljs-keyword">for</span> i := <span class="hljs-number">0</span>; i &lt; <span class="hljs-built_in">len</span>(inDescs); i++ &#123;  
+      outFrame := output.GetFrame(outDescs[i])  
+      inFrame := input.GetFrame(inDescs[i])  
+      numBytes += <span class="hljs-keyword">uint64</span>(<span class="hljs-built_in">len</span>(inFrame))  
+      outDescs[i].Len = <span class="hljs-keyword">uint32</span>(<span class="hljs-built_in">copy</span>(outFrame, inFrame))  
+   &#125;  
+   outDescs = outDescs[:<span class="hljs-built_in">len</span>(inDescs)]  
+  
+   output.Transmit(outDescs)  
+  
+   <span class="hljs-keyword">return</span>  
+&#125;</code></pre></div><h2 id="AF-XDP的应用"><a href="#AF-XDP的应用" class="headerlink" title="AF_XDP的应用"></a>AF_XDP的应用</h2><ul><li>VPP利用<a target="_blank" rel="noopener" href="https://docs.fd.io/vpp/21.01/d8/d44/af_xdp_doc.html"><code>af_xdp plugin</code></a>将数据包发送到用户空间</li><li>B站<a target="_blank" rel="noopener" href="https://www.bilibili.com/read/cv20778694">使用AF_XDP处理QUIC和HTTP/3</a>，带宽能提示提升25%～30%左右</li><li>DPDK使用<a target="_blank" rel="noopener" href="https://doc.dpdk.org/guides-21.08/nics/af_xdp.html">AF_XDP实现PMD</a></li></ul><h2 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h2><p><a target="_blank" rel="noopener" href="https://rexrock.github.io/post/af_xdp1/">https://rexrock.github.io/post/af_xdp1/</a><br><a target="_blank" rel="noopener" href="https://www.kernel.org/doc/html/next/networking/af_xdp.html">https://www.kernel.org/doc/html/next/networking/af_xdp.html</a><br><a target="_blank" rel="noopener" href="https://archive.fosdem.org/2018/schedule/event/af_xdp/">https://archive.fosdem.org/2018/schedule/event/af_xdp/</a></p></div><hr><div><div class="post-metas mb-3"><div class="post-meta mr-3"><i class="iconfont icon-category"></i> <a class="hover-with-bg" href="/categories/linux/">linux</a></div><div class="post-meta"><i class="iconfont icon-tags"></i> <a class="hover-with-bg" href="/tags/BPF/">BPF</a></div></div><p class="note note-warning">转载请注明出处</p><div class="post-prevnext row"><article class="post-prev col-6"></article><article class="post-next col-6"> <a href="/2023/03/15/eBPF%E5%9C%A8CPU%E8%B0%83%E5%BA%A6%E4%B8%8A%E7%9A%84%E5%BA%94%E7%94%A8/"><span class="hidden-mobile">eBPF在CPU调度上的应用</span> <span class="visible-mobile">下一篇</span><i class="iconfont icon-arrowright"></i></a></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
+  (function () {
+    // 查询存储的记录
+    function getRecord(Counter, target) {
+      return new Promise(function (resolve, reject) {
+        Counter('get', '/classes/Counter?where=' + encodeURIComponent(JSON.stringify({target})))
+          .then(resp => resp.json())
+          .then(({results, code, error}) => {
+            if (code === 401) {
+              throw error;
+            }
+            if (results && results.length > 0) {
+              var record = results[0];
+              resolve(record);
+            } else {
+              Counter('post', '/classes/Counter', {target, time: 0})
+                .then(resp => resp.json())
+                .then((record, error) => {
+                  if (error) {
+                    throw error;
+                  }
+                  resolve(record);
+                }).catch(error => {
+                console.error('Failed to create', error);
+                reject(error);
+              });
+            }
+          }).catch((error) => {
+          console.error('LeanCloud Counter Error:', error);
+          reject(error);
+        });
+      })
+    }
+
+    // 发起自增请求
+    function increment(Counter, incrArr) {
+      return new Promise(function (resolve, reject) {
+        Counter('post', '/batch', {
+          "requests": incrArr
+        }).then((res) => {
+          res = res.json();
+          if (res.error) {
+            throw res.error;
+          }
+          resolve(res);
+        }).catch((error) => {
+          console.error('Failed to save visitor count', error);
+          reject(error);
+        });
+      });
+    }
+
+    // 构建自增请求体
+    function buildIncrement(objectId) {
+      return {
+        "method": "PUT",
+        "path": `/1.1/classes/Counter/${ objectId }`,
+        "body": {
+          "time": {
+            '__op': 'Increment',
+            'amount': 1
+          }
+        }
+      }
+    }
+
+    // 校验是否为有效的 UV
+    function validUV() {
+      var key = 'LeanCloud_UV_Flag';
+      var flag = localStorage.getItem(key);
+      if (flag) {
+        // 距离标记小于 24 小时则不计为 UV
+        if (new Date().getTime() - parseInt(flag) <= 86400000) {
+          return false;
+        }
+      }
+      localStorage.setItem(key, new Date().getTime().toString());
+      return true;
+    }
+
+    function addCount(Counter) {
+      var enableIncr = 'true' === 'true' && window.location.hostname !== 'localhost';
+      var getterArr = [];
+      var incrArr = [];
+
+      // 请求 PV 并自增
+      var pvCtn = document.querySelector('#leancloud-site-pv-container');
+      if (pvCtn || enableIncr) {
+        var pvGetter = getRecord(Counter, 'site-pv').then((record) => {
+          incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-pv');
+          if (ele) {
+            ele.innerText = record.time + 1;
+            if (pvCtn) {
+              pvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(pvGetter);
+      }
+
+      // 请求 UV 并自增
+      var uvCtn = document.querySelector('#leancloud-site-uv-container');
+      if (uvCtn || enableIncr) {
+        var uvGetter = getRecord(Counter, 'site-uv').then((record) => {
+          var vuv = validUV();
+          vuv && incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-uv');
+          if (ele) {
+            ele.innerText = record.time + (vuv ? 1 : 0);
+            if (uvCtn) {
+              uvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(uvGetter);
+      }
+
+      // 如果是文章，请求文章的浏览数，并自增
+      if ('true' === 'true') {
+        var viewCtn = document.querySelector('#leancloud-post-views-container');
+        if (viewCtn || enableIncr) {
+          var target = decodeURI('/2023/03/21/AF-XDP%E7%9A%84%E5%8E%9F%E7%90%86%E4%B8%8E%E5%BA%94%E7%94%A8/');
+          var viewGetter = getRecord(Counter, target).then((record) => {
+            incrArr.push(buildIncrement(record.objectId))
+            if (viewCtn) {
+              var ele = document.querySelector('#leancloud-post-views');
+              if (ele) {
+                ele.innerText = (record.time || 0) + 1;
+                viewCtn.style.display = 'inline';
+              }
+            }
+          });
+          getterArr.push(viewGetter);
+        }
+      }
+
+      // 如果启动计数自增，批量发起自增请求
+      if (enableIncr) {
+        Promise.all(getterArr).then(() => {
+          incrArr.length > 0 && increment(Counter, incrArr);
+        })
+      }
+    }
+
+    var app_id = 'rGBkjlpYFYPq3Mztf0uHkwm2-gzGzoHsz'
+    var app_key = 'IwuJ6qbGLXA8pB3qeHHjuDT3'
+    var server_url = 'https://rgbkjlpy.lc-cn-n1-shared.com'
+
+    function fetchData(api_server) {
+      var Counter = (method, url, data) => {
+        return fetch(`${ api_server }/1.1${ url }`, {
+          method,
+          headers: {
+            'X-LC-Id': app_id,
+            'X-LC-Key': app_key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data)
+        });
+      };
+
+      addCount(Counter);
+    }
+
+    var api_server = app_id.slice(-9) !== '-MdYXbMMI' ? server_url : `https://${ app_id.slice(0, 8).toLowerCase() }.api.lncldglobal.com`;
+
+    if (api_server) {
+      fetchData(api_server);
+    } else {
+      fetch('https://app-router.leancloud.cn/2/route?appId=' + app_id)
+        .then(resp => resp.json())
+        .then(({api_server}) => {
+          fetchData('https://' + api_server);
+        });
+    }
+  })();
+</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>
