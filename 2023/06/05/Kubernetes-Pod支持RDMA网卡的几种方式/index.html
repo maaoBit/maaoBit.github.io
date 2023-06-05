@@ -1,0 +1,396 @@
+<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>Kubernetes Pod支持RDMA网卡的几种方式 - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item"><a class="nav-link" href="/about/"><i class="iconfont icon-user-fill"></i> 关于</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">Kubernetes Pod支持RDMA网卡的几种方式</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2023-06-05 14:48" pubdate>2023年6月5日 下午</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 2.6k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 35 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">Kubernetes Pod支持RDMA网卡的几种方式</h1><div class="markdown-body" id="post-body"><p>最近调研了几种实现Kubernetes Pod支持RDMA网卡的库，粗略的记录下。</p><a id="more"></a><h2 id="FreeFlow"><a href="#FreeFlow" class="headerlink" title="FreeFlow"></a>FreeFlow</h2><p><a target="_blank" rel="noopener" href="https://github.com/Microsoft/Freeflow">FreeFlow</a>是微软提出的一种RDMA技术，主要用于将RDMA应用在容器中。FreeFlow整体方案由三部分组成：</p><ul><li>FreeFlow network library（FFL），主要实现了Verbs，提供给应用程序调用。</li><li>FreeFlow software路由器（FFR），为主机上的多个容器进行RDMA流量路由。</li><li>FreeFlow network orchestrator（FFO），根据策略（Policies）、网络状态（Stats）控制FFR的行为。<br>FreeFlow架构如下，灰色部分为FreeFlow组件。</li></ul><p><img src="/img/rdma-freeflow-1.png" srcset="/img/loading.gif"></p><p><strong>FreeFlow的原理</strong>：一般应用程序利用RDMA API直接向硬件NIC发送命令，以实现控制和数据路径功能。FreeFlow拦截应用程序和物理网卡之间的通信，并通过软件的FreeFlow Router进行容器之间的路由，通过FreeFlow Netlib实现应用程序向硬件NIC的控制，从而实现控制平面和数据平面策略。FreeFlow实现了Verbs，因此对应用程序与硬件NIC来说，都是透明的。</p><p><strong>FreeFlow的缺点</strong>：</p><ul><li>FreeFlow提供了两种模式：Fastpath和LowCPU。Fastpath能提供接近于Host RDMA的传输性能，但为了实现零拷贝，需要绑核进行轮询，耗费大量CPU资源。而LowCPU模式，传输性能明显下降。<br><img src="/img/rdma-freeflow-2.png" srcset="/img/loading.gif"><br><img src="/img/rdma-freeflow-3.png" srcset="/img/loading.gif"></li></ul><h2 id="rit-k8s-rdma"><a href="#rit-k8s-rdma" class="headerlink" title="rit-k8s-rdma"></a>rit-k8s-rdma</h2><p><a target="_blank" rel="noopener" href="https://rit-k8s-rdma.github.io/">rit-k8s-rdma</a>通过CNI的方式给Kubernetes分配RDMA网卡，其主要由三部分构成：<br><img src="/img/rdmt-rit-k8s-rdma-1.png" srcset="/img/loading.gif"></p><ul><li>Scheduler Extension： 基于Kubernetes Scheduler的扩展架构开发，用于将Pod调度到具有足够RDMA资源的节点上。</li><li>RDMA Hardware Daemon Set：部署在每个节点上，一是用于初始化节点上的RDMA SR-IOV设备，二是用于提供RESTful接口，提供关于PF、VF的元数据。</li><li>CNI Plugin：用于给Pod分配RDMA网卡的CNI插件。基于<a target="_blank" rel="noopener" href="https://github.com/Mellanox/sriov-cni">Mellanox CNI</a>开发，Mellanox CNI可以为每个Pod分配一个RDMA VF接口，而rit-k8s-rdma cni plugin能为Pod分配多个RDMA VF接口，并且为每个RDMA VF接口配置带宽预留或限制。</li><li>Dummy Device Plugin：部署在每个节点上。由于使用RDMA的Pod一般需要访问<code>/dev/infiniband</code>目录，为了不使用特权Pod，通过Kubernetes Device Plugin机制将此Device通过<code>Dummy Device Plugin</code>返回给Kubelet，作为Pod的特权目录。</li></ul><p><strong>rit-k8s-rdma的优点</strong>：rit-k8s-rdma本质上是在Mellanox-network-operator的SR-IOV模式下添加了更加合理的调度、一个Pod分配多个RDMA VF接口、带宽限制等功能，通过在整体集群视角下的调度，以及节点层面的带宽限制，能更加合理的利用RDMA资源。</p><p><strong>rit-k8s-rdma的缺点</strong>：</p><ul><li>调度的算法过于简单。仅考虑到RDMA资源数量上是否满足Pod的需要，未考虑的RDMA资源的拓扑信息，进行优选调度。例如根据RDMA设备与GPU在节点上的拓扑，为Pod选取满足GPU与RDMA在同一PCIe设备上的节点；或是针对大模型训练任务中，考虑整体集群的流量拓扑，避免某些节点之间通信过于繁忙，导致拥塞。</li></ul><h2 id="Mellanox-network-operator"><a href="#Mellanox-network-operator" class="headerlink" title="Mellanox-network-operator"></a>Mellanox-network-operator</h2><p><a target="_blank" rel="noopener" href="https://github.com/Mellanox/network-operator">Mellanox-network-operator</a>也被叫NVIDA Network Operator，是NVIDA开源的一套RDMA与Kubernetes集成方案，利用Kubernetes CRDs与Operator SDK来管理RDMA网络，为Pod支持RDMA网卡与GPUDirect特性。Mellanox-network-operator更像是一组RDMA集成方案的集合，例如通过Macvlan的方式添加RDMA网卡，或是SR-IOV的方式添加RDMA网卡，亦或是使用Share RDMA的方式，将RDMA网卡设备添加到多个Pod中共同使用。用户通过设置helm value或是修改CRD，来使用某一种RDMA集成方案。</p><p>Mellanox-network-operator主要组件包括：</p><ul><li>Mellanox drivers：Mellanox网卡驱动。</li><li>nvidia-peermem：基于Mellanox IB的HCAs，提供对NVIDIA GPU显存的点对点读写。</li><li>k8s device plugin：用于管理RDMA网卡的Kubernetes Device Plugin。</li><li>SR-IOV Operator：用于部署SR-IOV容器网络。</li><li>Kubernetes CNI：包括用于容器分配多网络的Mutlus CNI、分配RDMA网络的Mellanox CNI.</li></ul><h3 id="CRD"><a href="#CRD" class="headerlink" title="CRD"></a>CRD</h3><p>Mellanox-network-operator定义了四个CRD，用于配置部署。</p><p><strong>NICClusterPolicy CRD</strong></p><p>用于配置全局的部署参数，operator只会使用名为“nic-cluster-policy”的实例，忽略其他的实例。参数包括：</p><ul><li>配置容器化的mellanox OFED Driver的<code>ofedDriver</code>。</li><li>配置rdma share模式下device plugin的<code>rdmaSharedDevicePlugin</code>。</li><li>配置sr-iov模式下sr-iov device plugin的<code>sriovDevicePlugin</code>。</li><li>配置GPUDirect特性下nvidia peermem的<code>nvPeerDriver</code></li><li>用于配置InfiniBand Kubernetes的<code>ibKubernetes</code>，InfiniBand Kubernetes能配合IOV CNI与Intel Multus CNI工作，目前只用于NVIDIA UFM（Unified Fabric Manager）的Guid生成，配置到Pod的annotation上。</li><li>用于配置第二张Pod网卡的<code>SecondaryNetwork</code>，第二网络可以是</li></ul><p>官方的样例：</p><div class="hljs"><pre><code class="hljs yaml"><span class="hljs-attr">apiVersion:</span> <span class="hljs-string">mellanox.com/v1alpha1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">NicClusterPolicy</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">nic-cluster-policy</span>
+  <span class="hljs-attr">namespace:</span> <span class="hljs-string">nvidia-network-operator</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">ofedDriver:</span>
+    <span class="hljs-attr">image:</span> <span class="hljs-string">mofed</span>
+    <span class="hljs-attr">repository:</span> <span class="hljs-string">nvcr.io/nvidia/mellanox</span>
+    <span class="hljs-attr">version:</span> <span class="hljs-number">5.9</span><span class="hljs-number">-0.5</span><span class="hljs-number">.6</span><span class="hljs-number">.0</span>
+    <span class="hljs-attr">startupProbe:</span>
+      <span class="hljs-attr">initialDelaySeconds:</span> <span class="hljs-number">10</span>
+      <span class="hljs-attr">periodSeconds:</span> <span class="hljs-number">10</span>
+    <span class="hljs-attr">livenessProbe:</span>
+      <span class="hljs-attr">initialDelaySeconds:</span> <span class="hljs-number">30</span>
+      <span class="hljs-attr">periodSeconds:</span> <span class="hljs-number">30</span>
+    <span class="hljs-attr">readinessProbe:</span>
+      <span class="hljs-attr">initialDelaySeconds:</span> <span class="hljs-number">10</span>
+      <span class="hljs-attr">periodSeconds:</span> <span class="hljs-number">30</span>
+  <span class="hljs-attr">rdmaSharedDevicePlugin:</span>
+    <span class="hljs-attr">image:</span> <span class="hljs-string">k8s-rdma-shared-dev-plugin</span>
+    <span class="hljs-attr">repository:</span> <span class="hljs-string">nvcr.io/nvidia/cloud-native</span>
+    <span class="hljs-attr">version:</span> <span class="hljs-string">v1.3.2</span>
+    <span class="hljs-comment"># The config below directly propagates to k8s-rdma-shared-device-plugin configuration.</span>
+    <span class="hljs-comment"># Replace &#x27;devices&#x27; with your (RDMA capable) netdevice name.</span>
+    <span class="hljs-attr">config:</span> <span class="hljs-string">|</span>
+      &#123;
+        <span class="hljs-attr">&quot;configList&quot;:</span> [
+          &#123;
+            <span class="hljs-attr">&quot;resourceName&quot;:</span> <span class="hljs-string">&quot;rdma_shared_device_a&quot;</span>,
+            <span class="hljs-attr">&quot;rdmaHcaMax&quot;:</span> <span class="hljs-number">1000</span>,
+            <span class="hljs-attr">&quot;selectors&quot;:</span> &#123;
+              <span class="hljs-attr">&quot;vendors&quot;:</span> [<span class="hljs-string">&quot;15b3&quot;</span>],
+              <span class="hljs-attr">&quot;deviceIDs&quot;:</span> [<span class="hljs-string">&quot;1017&quot;</span>],
+              <span class="hljs-attr">&quot;ifNames&quot;:</span> [<span class="hljs-string">&quot;ens2f0&quot;</span>]
+            &#125;
+          &#125;
+        ]
+      &#125;
+  <span class="hljs-attr">secondaryNetwork:</span>
+    <span class="hljs-attr">cniPlugins:</span>
+      <span class="hljs-attr">image:</span> <span class="hljs-string">plugins</span>
+      <span class="hljs-attr">repository:</span> <span class="hljs-string">ghcr.io/k8snetworkplumbingwg</span>
+      <span class="hljs-attr">version:</span> <span class="hljs-string">v0.8.7-amd64</span>
+    <span class="hljs-attr">multus:</span>
+      <span class="hljs-attr">image:</span> <span class="hljs-string">multus-cni</span>
+      <span class="hljs-attr">repository:</span> <span class="hljs-string">ghcr.io/k8snetworkplumbingwg</span>
+      <span class="hljs-attr">version:</span> <span class="hljs-string">v3.8</span>
+      <span class="hljs-comment"># if config is missing or empty then multus config will be automatically generated from the CNI configuration file of the master plugin (the first file in lexicographical order in cni-conf-dir)</span>
+      <span class="hljs-attr">config:</span> <span class="hljs-string">&#x27;&#x27;</span>
+    <span class="hljs-attr">ipamPlugin:</span>
+      <span class="hljs-attr">image:</span> <span class="hljs-string">whereabouts</span>
+      <span class="hljs-attr">repository:</span> <span class="hljs-string">ghcr.io/k8snetworkplumbingwg</span>
+      <span class="hljs-attr">version:</span> <span class="hljs-string">v0.5.4-amd64</span></code></pre></div><p><strong>MacvlanNetwork CRD</strong></p><p>用于定义Macvlan类型的第二网络，此CRD会被转成Intel Mutlus CNI的CRD <code>NetworkAttachmentDefinition</code>。</p><p>官方样例：</p><div class="hljs"><pre><code class="hljs yaml"><span class="hljs-attr">apiVersion:</span> <span class="hljs-string">mellanox.com/v1alpha1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">MacvlanNetwork</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">example-macvlannetwork</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">networkNamespace:</span> <span class="hljs-string">&quot;default&quot;</span>
+  <span class="hljs-attr">master:</span> <span class="hljs-string">&quot;ens2f0&quot;</span>
+  <span class="hljs-attr">mode:</span> <span class="hljs-string">&quot;bridge&quot;</span>
+  <span class="hljs-attr">mtu:</span> <span class="hljs-number">1500</span>
+  <span class="hljs-attr">ipam:</span> <span class="hljs-string">|</span>
+    &#123;
+      <span class="hljs-attr">&quot;type&quot;:</span> <span class="hljs-string">&quot;whereabouts&quot;</span>,
+      <span class="hljs-attr">&quot;datastore&quot;:</span> <span class="hljs-string">&quot;kubernetes&quot;</span>,
+      <span class="hljs-attr">&quot;kubernetes&quot;:</span> &#123;
+        <span class="hljs-attr">&quot;kubeconfig&quot;:</span> <span class="hljs-string">&quot;/etc/cni/net.d/whereabouts.d/whereabouts.kubeconfig&quot;</span>
+      &#125;,
+      <span class="hljs-attr">&quot;range&quot;:</span> <span class="hljs-string">&quot;192.168.2.225/28&quot;</span>,
+      <span class="hljs-attr">&quot;exclude&quot;:</span> [
+       <span class="hljs-string">&quot;192.168.2.229/30&quot;</span>,
+       <span class="hljs-string">&quot;192.168.2.236/32&quot;</span>
+      ],
+      <span class="hljs-string">&quot;log_file&quot;</span> <span class="hljs-string">:</span> <span class="hljs-string">&quot;/var/log/whereabouts.log&quot;</span>,
+      <span class="hljs-string">&quot;log_level&quot;</span> <span class="hljs-string">:</span> <span class="hljs-string">&quot;info&quot;</span>,
+      <span class="hljs-attr">&quot;gateway&quot;:</span> <span class="hljs-string">&quot;192.168.2.1&quot;</span>
+    &#125;</code></pre></div><p><strong>HostDeviceNetwork CRD</strong></p><p>用于定义HostDevice类型的第二网络，此CRD会被转成Intel Mutlus CNI的CRD <code>NetworkAttachmentDefinition</code>。</p><p>官方样例：</p><div class="hljs"><pre><code class="hljs yaml"><span class="hljs-attr">apiVersion:</span> <span class="hljs-string">mellanox.com/v1alpha1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">HostDeviceNetwork</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">example-hostdevice-network</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">networkNamespace:</span> <span class="hljs-string">&quot;default&quot;</span>
+  <span class="hljs-attr">resourceName:</span> <span class="hljs-string">&quot;hostdev&quot;</span>
+  <span class="hljs-attr">ipam:</span> <span class="hljs-string">|</span>
+    &#123;
+      <span class="hljs-attr">&quot;type&quot;:</span> <span class="hljs-string">&quot;whereabouts&quot;</span>,
+      <span class="hljs-attr">&quot;datastore&quot;:</span> <span class="hljs-string">&quot;kubernetes&quot;</span>,
+      <span class="hljs-attr">&quot;kubernetes&quot;:</span> &#123;
+        <span class="hljs-attr">&quot;kubeconfig&quot;:</span> <span class="hljs-string">&quot;/etc/cni/net.d/whereabouts.d/whereabouts.kubeconfig&quot;</span>
+      &#125;,
+      <span class="hljs-attr">&quot;range&quot;:</span> <span class="hljs-string">&quot;192.168.3.225/28&quot;</span>,
+      <span class="hljs-attr">&quot;exclude&quot;:</span> [
+       <span class="hljs-string">&quot;192.168.3.229/30&quot;</span>,
+       <span class="hljs-string">&quot;192.168.3.236/32&quot;</span>
+      ],
+      <span class="hljs-string">&quot;log_file&quot;</span> <span class="hljs-string">:</span> <span class="hljs-string">&quot;/var/log/whereabouts.log&quot;</span>,
+      <span class="hljs-string">&quot;log_level&quot;</span> <span class="hljs-string">:</span> <span class="hljs-string">&quot;info&quot;</span>
+    &#125;</code></pre></div><p><strong>IPoIBNetwork CRD</strong></p><p>用于定义IPoIB类型的第二网络，此CRD会被转成Intel Mutlus CNI的CRD <code>NetworkAttachmentDefinition</code>。</p><p>官方样例：</p><div class="hljs"><pre><code class="hljs yaml"><span class="hljs-attr">apiVersion:</span> <span class="hljs-string">mellanox.com/v1alpha1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">IPoIBNetwork</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">example-ipoibnetwork</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">networkNamespace:</span> <span class="hljs-string">&quot;default&quot;</span>
+  <span class="hljs-attr">master:</span> <span class="hljs-string">&quot;ibs3f1&quot;</span>
+  <span class="hljs-attr">ipam:</span> <span class="hljs-string">|</span>
+    &#123;
+      <span class="hljs-attr">&quot;type&quot;:</span> <span class="hljs-string">&quot;whereabouts&quot;</span>,
+      <span class="hljs-attr">&quot;datastore&quot;:</span> <span class="hljs-string">&quot;kubernetes&quot;</span>,
+      <span class="hljs-attr">&quot;kubernetes&quot;:</span> &#123;
+        <span class="hljs-attr">&quot;kubeconfig&quot;:</span> <span class="hljs-string">&quot;/etc/cni/net.d/whereabouts.d/whereabouts.kubeconfig&quot;</span>
+      &#125;,
+      <span class="hljs-attr">&quot;range&quot;:</span> <span class="hljs-string">&quot;192.168.5.225/28&quot;</span>,
+      <span class="hljs-attr">&quot;exclude&quot;:</span> [
+       <span class="hljs-string">&quot;192.168.6.229/30&quot;</span>,
+       <span class="hljs-string">&quot;192.168.6.236/32&quot;</span>
+      ],
+      <span class="hljs-string">&quot;log_file&quot;</span> <span class="hljs-string">:</span> <span class="hljs-string">&quot;/var/log/whereabouts.log&quot;</span>,
+      <span class="hljs-string">&quot;log_level&quot;</span> <span class="hljs-string">:</span> <span class="hljs-string">&quot;info&quot;</span>,
+      <span class="hljs-attr">&quot;gateway&quot;:</span> <span class="hljs-string">&quot;192.168.6.1&quot;</span>
+    &#125;</code></pre></div><h3 id="部署方式"><a href="#部署方式" class="headerlink" title="部署方式"></a>部署方式</h3><p>Mellanox-network-operator提供了许多种Kubernetes集成RDMA的方式。比如RDMA Shared Device Plugin、Host Device Network、SR-IOV方式等，SR-IOV方式有能分为传统的SR-IOV方式、用于IB网络的SR-IOV方式、用于Nvidia UFM的SR-IOV方式。下面以RoCE场景下（因工作中主要是用RoCE V2，其他方式以后再研究）几种部署方式进行介绍。</p><h4 id="RDMA-Shared-Device-Plugin"><a href="#RDMA-Shared-Device-Plugin" class="headerlink" title="RDMA Shared Device Plugin"></a>RDMA Shared Device Plugin</h4><p>RDMA Shared Device Plugin模式下，RDMA设备通过Device Plugin将device目录传递给容器，多个容器共享RDMA设备。部署后的架构如下图所示：</p><p><img src="/img/rdma-mellanox-operator-1.png" srcset="/img/loading.gif"></p><p><strong>部署方式</strong>：<br>通过helm部署，helm的<code>values.yaml</code>如下：</p><div class="hljs"><pre><code class="hljs yaml"><span class="hljs-attr">nfd:</span>
+  <span class="hljs-attr">enabled:</span> <span class="hljs-literal">true</span>
+<span class="hljs-attr">sriovNetworkOperator:</span>
+  <span class="hljs-attr">enabled:</span> <span class="hljs-literal">false</span>
+<span class="hljs-comment"># NicClusterPolicy CR values:</span>
+<span class="hljs-attr">deployCR:</span> <span class="hljs-literal">true</span>
+<span class="hljs-attr">ofedDriver:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span>
+    
+<span class="hljs-attr">nvPeerDriver:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">false</span>
+    
+<span class="hljs-attr">rdmaSharedDevicePlugin:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span>
+  <span class="hljs-attr">resources:</span>
+    <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">rdma_shared_device_a</span>
+      <span class="hljs-attr">ifNames:</span> [<span class="hljs-string">ens1f0</span>]
+  
+<span class="hljs-attr">sriovDevicePlugin:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">false</span></code></pre></div><h4 id="Secondary-Network"><a href="#Secondary-Network" class="headerlink" title="Secondary Network"></a>Secondary Network</h4><p>Secondary Network模式下，RDMA网卡作为Pod的第二张网卡存在，第二张网卡的实现方式有多种，可以通过上面介绍的CRD进行配置。以macvlan为例，kubelet创建pod时，通过Multus CNI创建两张网卡，其中第一张为主网卡，第二张为使用RDMA设备创建的macvlan网卡，部署后的架构如下图所示：<br><img src="/img/rdma-mellanox-operator-2.png" srcset="/img/loading.gif"></p><p><strong>部署方式</strong>：<br>通过helm部署，helm的<code>values.yaml</code>如下：</p><div class="hljs"><pre><code class="hljs yaml"><span class="hljs-attr">nfd:</span>
+  <span class="hljs-attr">enabled:</span> <span class="hljs-literal">true</span>
+<span class="hljs-attr">sriovNetworkOperator:</span>
+  <span class="hljs-attr">enabled:</span> <span class="hljs-literal">false</span>
+<span class="hljs-comment"># NicClusterPolicy CR values:</span>
+<span class="hljs-attr">deployCR:</span> <span class="hljs-literal">true</span>
+<span class="hljs-attr">ofedDriver:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">false</span>
+ 
+<span class="hljs-attr">rdmaSharedDevicePlugin:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span>
+  <span class="hljs-attr">resources:</span>
+    <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">rdma_shared_device_a</span>
+      <span class="hljs-attr">ifNames:</span> [<span class="hljs-string">ens1f0</span>]
+ 
+<span class="hljs-attr">secondaryNetwork:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span>
+  <span class="hljs-attr">multus:</span>
+    <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span>
+  <span class="hljs-attr">cniPlugins:</span>
+    <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span>
+  <span class="hljs-attr">ipamPlugin:</span>
+    <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span></code></pre></div><h4 id="Host-Device-Network"><a href="#Host-Device-Network" class="headerlink" title="Host Device Network"></a>Host Device Network</h4><p>Host Device Network模式下，RDMA设备会先通过SR-IOV进行虚化，Pod的第二张网卡通过host- dev cni将VF或PF添加到Pod里，部署后的架构如下图所示：<br><img src="/img/rdma-mellanox-operator-3.png" srcset="/img/loading.gif"><br><strong>部署方式</strong>：<br>通过helm部署，helm的<code>values.yaml</code>如下：</p><div class="hljs"><pre><code class="hljs yaml"><span class="hljs-attr">nfd:</span>
+  <span class="hljs-attr">enabled:</span> <span class="hljs-literal">true</span>
+<span class="hljs-attr">sriovNetworkOperator:</span>
+  <span class="hljs-attr">enabled:</span> <span class="hljs-literal">false</span>
+<span class="hljs-comment"># NicClusterPolicy CR values:</span>
+<span class="hljs-attr">deployCR:</span> <span class="hljs-literal">true</span>
+<span class="hljs-attr">ofedDriver:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">false</span>
+  
+<span class="hljs-attr">rdmaSharedDevicePlugin:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">false</span>
+ 
+<span class="hljs-attr">sriovDevicePlugin:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span>
+  <span class="hljs-attr">resources:</span>
+    <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">hostdev</span>
+      <span class="hljs-attr">vendors:</span> [<span class="hljs-string">15b3</span>]
+<span class="hljs-attr">secondaryNetwork:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span>
+  <span class="hljs-attr">multus:</span>
+    <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span>
+  <span class="hljs-attr">cniPlugins:</span>
+    <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span>
+  <span class="hljs-attr">ipamPlugin:</span>
+    <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span></code></pre></div><p>除此外还需通过<code>HostDeviceNetwork</code> CRD进行配置。</p><h4 id="SR-IOV-Operator"><a href="#SR-IOV-Operator" class="headerlink" title="SR-IOV Operator"></a>SR-IOV Operator</h4><p>SR-IOV Operator模式实际上是通过<a target="_blank" rel="noopener" href="https://github.com/openshift/sriov-network-operator">sriov-network-operator</a>自动配置SR-IOV，然后通过SR-IOV cni配置pod网络，部署后的架构如下图所示：</p><p><img src="/img/rdma-mellanox-operator-4.png" srcset="/img/loading.gif"></p><p><strong>部署方式</strong>：<br>通过helm部署，helm的<code>values.yaml</code>如下：</p><div class="hljs"><pre><code class="hljs yaml"><span class="hljs-attr">nfd:</span>
+  <span class="hljs-attr">enabled:</span> <span class="hljs-literal">true</span>
+<span class="hljs-attr">sriovNetworkOperator:</span>
+  <span class="hljs-attr">enabled:</span> <span class="hljs-literal">true</span>
+  
+<span class="hljs-comment"># NicClusterPolicy CR values:</span>
+<span class="hljs-attr">deployCR:</span> <span class="hljs-literal">true</span>
+<span class="hljs-attr">ofedDriver:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span>
+<span class="hljs-attr">rdmaSharedDevicePlugin:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">false</span>
+<span class="hljs-attr">sriovDevicePlugin:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">false</span>
+ 
+<span class="hljs-attr">secondaryNetwork:</span>
+  <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span>
+  <span class="hljs-attr">multus:</span>
+    <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span>
+  <span class="hljs-attr">cniPlugins:</span>
+    <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span>
+  <span class="hljs-attr">ipamPlugin:</span>
+    <span class="hljs-attr">deploy:</span> <span class="hljs-literal">true</span></code></pre></div><h4 id="几种部署方式的比较"><a href="#几种部署方式的比较" class="headerlink" title="几种部署方式的比较"></a>几种部署方式的比较</h4><p>各种方式中，SR-IOV Operator在RoCE场景下更具有优势。相比Host Device Network方式，SR-IOV Operator自动化程度更高，通过sriov-network-operator的CRD可以配置各个节点的SR-IOV网卡配置；相比Macvlan的Secondary Network，SR-IOV虚拟化能带来比Macvlan更好的性能。</p><h4 id="优缺点"><a href="#优缺点" class="headerlink" title="优缺点"></a>优缺点</h4><p>Mellanox-network-operator提供的部署方式与功能特性（例如GPUDirect）是它的优点。缺点在于缺少集群调度层面的控制，与rit-k8s-rdma类似，无法根据设备拓扑进行RDMA资源的最优分配。</p><h2 id="总结"><a href="#总结" class="headerlink" title="总结"></a>总结</h2><p>上述三种方式中，在RoCE场景下，以Mellanox-Network-Operator的SR-IOV Operator部署方式为最优，但无法实现GPU与RDMA的PCIe对齐，以提高大模型的训练速度。<br>针对GPU与RDMA的PCIe对齐，Mellanox-Network-Operator的SR-IOV Operator部署方式欠缺的能力主要包括：<br>1）通过调度，选择可以为Pod分配相同PCIe Switch下GPU与RDMA资源的节点。<br>2）在节点层面，为Pod分配相同PCIe Switch下GPU与RDMA资源。由于目前NVIDIA GPU、Mellanox RDMA的资源分配方式均是使用Device Plugin机制，Device Plugin的资源分配基本完全由Kubelet决定，而Device Plugin资源的拓扑感知是受Kubelet topology manager控制，Kubelet topology manager只能做到NUMA对齐，因此无法做到PCIe的对齐。</p></div><hr><div><div class="post-metas mb-3"><div class="post-meta mr-3"><i class="iconfont icon-category"></i> <a class="hover-with-bg" href="/categories/AI/">AI</a> <a class="hover-with-bg" href="/categories/AI/Kubernetes/">Kubernetes</a></div><div class="post-meta"><i class="iconfont icon-tags"></i> <a class="hover-with-bg" href="/tags/Kubernetes/">Kubernetes</a> <a class="hover-with-bg" href="/tags/RDMA/">RDMA</a></div></div><p class="note note-warning">转载请注明出处</p><div class="post-prevnext row"><article class="post-prev col-6"></article><article class="post-next col-6"> <a href="/2023/03/21/AF-XDP%E7%9A%84%E5%8E%9F%E7%90%86%E4%B8%8E%E5%BA%94%E7%94%A8/"><span class="hidden-mobile">AF_XDP的原理与应用</span> <span class="visible-mobile">下一篇</span><i class="iconfont icon-arrowright"></i></a></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
+  (function () {
+    // 查询存储的记录
+    function getRecord(Counter, target) {
+      return new Promise(function (resolve, reject) {
+        Counter('get', '/classes/Counter?where=' + encodeURIComponent(JSON.stringify({target})))
+          .then(resp => resp.json())
+          .then(({results, code, error}) => {
+            if (code === 401) {
+              throw error;
+            }
+            if (results && results.length > 0) {
+              var record = results[0];
+              resolve(record);
+            } else {
+              Counter('post', '/classes/Counter', {target, time: 0})
+                .then(resp => resp.json())
+                .then((record, error) => {
+                  if (error) {
+                    throw error;
+                  }
+                  resolve(record);
+                }).catch(error => {
+                console.error('Failed to create', error);
+                reject(error);
+              });
+            }
+          }).catch((error) => {
+          console.error('LeanCloud Counter Error:', error);
+          reject(error);
+        });
+      })
+    }
+
+    // 发起自增请求
+    function increment(Counter, incrArr) {
+      return new Promise(function (resolve, reject) {
+        Counter('post', '/batch', {
+          "requests": incrArr
+        }).then((res) => {
+          res = res.json();
+          if (res.error) {
+            throw res.error;
+          }
+          resolve(res);
+        }).catch((error) => {
+          console.error('Failed to save visitor count', error);
+          reject(error);
+        });
+      });
+    }
+
+    // 构建自增请求体
+    function buildIncrement(objectId) {
+      return {
+        "method": "PUT",
+        "path": `/1.1/classes/Counter/${ objectId }`,
+        "body": {
+          "time": {
+            '__op': 'Increment',
+            'amount': 1
+          }
+        }
+      }
+    }
+
+    // 校验是否为有效的 UV
+    function validUV() {
+      var key = 'LeanCloud_UV_Flag';
+      var flag = localStorage.getItem(key);
+      if (flag) {
+        // 距离标记小于 24 小时则不计为 UV
+        if (new Date().getTime() - parseInt(flag) <= 86400000) {
+          return false;
+        }
+      }
+      localStorage.setItem(key, new Date().getTime().toString());
+      return true;
+    }
+
+    function addCount(Counter) {
+      var enableIncr = 'true' === 'true' && window.location.hostname !== 'localhost';
+      var getterArr = [];
+      var incrArr = [];
+
+      // 请求 PV 并自增
+      var pvCtn = document.querySelector('#leancloud-site-pv-container');
+      if (pvCtn || enableIncr) {
+        var pvGetter = getRecord(Counter, 'site-pv').then((record) => {
+          incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-pv');
+          if (ele) {
+            ele.innerText = record.time + 1;
+            if (pvCtn) {
+              pvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(pvGetter);
+      }
+
+      // 请求 UV 并自增
+      var uvCtn = document.querySelector('#leancloud-site-uv-container');
+      if (uvCtn || enableIncr) {
+        var uvGetter = getRecord(Counter, 'site-uv').then((record) => {
+          var vuv = validUV();
+          vuv && incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-uv');
+          if (ele) {
+            ele.innerText = record.time + (vuv ? 1 : 0);
+            if (uvCtn) {
+              uvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(uvGetter);
+      }
+
+      // 如果是文章，请求文章的浏览数，并自增
+      if ('true' === 'true') {
+        var viewCtn = document.querySelector('#leancloud-post-views-container');
+        if (viewCtn || enableIncr) {
+          var target = decodeURI('/2023/06/05/Kubernetes-Pod%E6%94%AF%E6%8C%81RDMA%E7%BD%91%E5%8D%A1%E7%9A%84%E5%87%A0%E7%A7%8D%E6%96%B9%E5%BC%8F/');
+          var viewGetter = getRecord(Counter, target).then((record) => {
+            incrArr.push(buildIncrement(record.objectId))
+            if (viewCtn) {
+              var ele = document.querySelector('#leancloud-post-views');
+              if (ele) {
+                ele.innerText = (record.time || 0) + 1;
+                viewCtn.style.display = 'inline';
+              }
+            }
+          });
+          getterArr.push(viewGetter);
+        }
+      }
+
+      // 如果启动计数自增，批量发起自增请求
+      if (enableIncr) {
+        Promise.all(getterArr).then(() => {
+          incrArr.length > 0 && increment(Counter, incrArr);
+        })
+      }
+    }
+
+    var app_id = 'rGBkjlpYFYPq3Mztf0uHkwm2-gzGzoHsz'
+    var app_key = 'IwuJ6qbGLXA8pB3qeHHjuDT3'
+    var server_url = 'https://rgbkjlpy.lc-cn-n1-shared.com'
+
+    function fetchData(api_server) {
+      var Counter = (method, url, data) => {
+        return fetch(`${ api_server }/1.1${ url }`, {
+          method,
+          headers: {
+            'X-LC-Id': app_id,
+            'X-LC-Key': app_key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data)
+        });
+      };
+
+      addCount(Counter);
+    }
+
+    var api_server = app_id.slice(-9) !== '-MdYXbMMI' ? server_url : `https://${ app_id.slice(0, 8).toLowerCase() }.api.lncldglobal.com`;
+
+    if (api_server) {
+      fetchData(api_server);
+    } else {
+      fetch('https://app-router.leancloud.cn/2/route?appId=' + app_id)
+        .then(resp => resp.json())
+        .then(({api_server}) => {
+          fetchData('https://' + api_server);
+        });
+    }
+  })();
+</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>

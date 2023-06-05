@@ -2,6 +2,13 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   
   <url>
+    <loc>https://maao.cloud/2023/06/05/Kubernetes-Pod%E6%94%AF%E6%8C%81RDMA%E7%BD%91%E5%8D%A1%E7%9A%84%E5%87%A0%E7%A7%8D%E6%96%B9%E5%BC%8F/</loc>
+    
+    <lastmod>2023-06-05</lastmod>
+    
+  </url>
+  
+  <url>
     <loc>https://maao.cloud/2023/03/21/AF-XDP%E7%9A%84%E5%8E%9F%E7%90%86%E4%B8%8E%E5%BA%94%E7%94%A8/</loc>
     
     <lastmod>2023-03-21</lastmod>
@@ -102,71 +109,85 @@
 
   <url>
     <loc>https://maao.cloud/</loc>
-    <lastmod>2023-03-21</lastmod>
+    <lastmod>2023-06-05</lastmod>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
   </url>
 
   
   <url>
-    <loc>https://maao.cloud/tags/Kube-proxy/</loc>
-    <lastmod>2023-03-21</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
-    <loc>https://maao.cloud/tags/IPVS/</loc>
-    <lastmod>2023-03-21</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
-    <loc>https://maao.cloud/tags/Calico/</loc>
-    <lastmod>2023-03-21</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
-    <loc>https://maao.cloud/tags/BGP/</loc>
-    <lastmod>2023-03-21</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
     <loc>https://maao.cloud/tags/BPF/</loc>
-    <lastmod>2023-03-21</lastmod>
+    <lastmod>2023-06-05</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/tags/Cilium/</loc>
-    <lastmod>2023-03-21</lastmod>
+    <lastmod>2023-06-05</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maao.cloud/tags/Kubernetes/</loc>
+    <lastmod>2023-06-05</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maao.cloud/tags/Kube-proxy/</loc>
+    <lastmod>2023-06-05</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maao.cloud/tags/IPVS/</loc>
+    <lastmod>2023-06-05</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maao.cloud/tags/Calico/</loc>
+    <lastmod>2023-06-05</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maao.cloud/tags/BGP/</loc>
+    <lastmod>2023-06-05</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/tags/MetalLB/</loc>
-    <lastmod>2023-03-21</lastmod>
+    <lastmod>2023-06-05</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/tags/Controller/</loc>
-    <lastmod>2023-03-21</lastmod>
+    <lastmod>2023-06-05</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/tags/Seccomp/</loc>
-    <lastmod>2023-03-21</lastmod>
+    <lastmod>2023-06-05</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maao.cloud/tags/RDMA/</loc>
+    <lastmod>2023-06-05</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
@@ -175,21 +196,35 @@
   
   <url>
     <loc>https://maao.cloud/categories/kubernetes/</loc>
-    <lastmod>2023-03-21</lastmod>
+    <lastmod>2023-06-05</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/categories/calico/</loc>
-    <lastmod>2023-03-21</lastmod>
+    <lastmod>2023-06-05</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/categories/linux/</loc>
-    <lastmod>2023-03-21</lastmod>
+    <lastmod>2023-06-05</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maao.cloud/categories/AI/</loc>
+    <lastmod>2023-06-05</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maao.cloud/categories/AI/Kubernetes/</loc>
+    <lastmod>2023-06-05</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
