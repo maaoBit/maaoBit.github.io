@@ -4,6 +4,31 @@
   
   
   <entry>
+    <title>查询RDMA网卡逻辑Port与物理设备映射的几种方式</title>
+    <link href="/2023/06/12/%E6%9F%A5%E8%AF%A2RDMA%E7%BD%91%E5%8D%A1%E9%80%BB%E8%BE%91Port%E4%B8%8E%E7%89%A9%E7%90%86%E8%AE%BE%E5%A4%87%E6%98%A0%E5%B0%84%E7%9A%84%E5%87%A0%E7%A7%8D%E6%96%B9%E5%BC%8F/"/>
+    <url>/2023/06/12/%E6%9F%A5%E8%AF%A2RDMA%E7%BD%91%E5%8D%A1%E9%80%BB%E8%BE%91Port%E4%B8%8E%E7%89%A9%E7%90%86%E8%AE%BE%E5%A4%87%E6%98%A0%E5%B0%84%E7%9A%84%E5%87%A0%E7%A7%8D%E6%96%B9%E5%BC%8F/</url>
+    
+    <content type="html"><![CDATA[<p>通过<code>ibv_devices</code>或<code>ibv_devinfo</code>输出的device，例如<code>mlx4_0</code>，对应的是RDMA网卡上的某个Port。<code>mlx4_0</code>具体对应主机上的哪个网卡（例如<code>eth0</code>）、对应哪个PCIe设备，可以通过以下方式查询。</p><a id="more"></a><h2 id="逻辑Port与主机网卡的映射"><a href="#逻辑Port与主机网卡的映射" class="headerlink" title="逻辑Port与主机网卡的映射"></a>逻辑Port与主机网卡的映射</h2><p>1、如果安装了<code>MLNX_OFED</code>，可以通过<code>ibdev2netdev</code>命令查询。</p><pre><code class="hljs shell"><span class="hljs-meta">#</span><span class="bash"> ibdev2netdev  </span>mlx4_0 port 1 ==&gt; eth2 (Up)  mlx4_0 port 2 ==&gt; ib0 (Down)</code></pre><p>2、如果按照了<code>MST (Mellanox Software Tools)</code>，可以通过<code>mst</code>命令查询</p><pre><code class="hljs shell"><span class="hljs-meta">#</span><span class="bash"> mst start  </span>Starting MST (Mellanox Software Tools) driver set  Loading MST PCI module - Success  Loading MST PCI configuration module - Success  Create devices  <span class="hljs-meta">#</span><span class="bash"> mst status -v  </span>MST modules:  ------------      MST PCI module loaded      MST PCI configuration module loaded  PCI devices:  ------------  DEVICE_TYPE             MST                           PCI       RDMA    NET                       NUMA  ConnectX3(rev:1)        /dev/mst/mt4099_pciconf0  ConnectX3(rev:1)        /dev/mst/mt4099_pci_cr0       0a:00.0   **mlx4_0**  net-**ib0**,net-**eth2**          0</code></pre><p>3、如果使用<code>Inbox Driver</code>，可以通过如下命令查询，其中<code>eth0</code>可以换成其他网卡，例如<code>eth2</code>、<code>ib0</code>等</p><pre><code class="hljs shell"><span class="hljs-meta">#</span><span class="bash"> cat /sys/class/net/eth0/device/infiniband_verbs/uverbs0/ibdev</span>mlx4_0</code></pre><h2 id="逻辑Port与PCI设备的映射"><a href="#逻辑Port与PCI设备的映射" class="headerlink" title="逻辑Port与PCI设备的映射"></a>逻辑Port与PCI设备的映射</h2><p>在找到逻辑Port对应的主机网卡后，通过<code>ethtool -i</code>就可以查询到网卡具体的PCI ID，然后通过<code>lspci</code>找到具体的PCI设备。例如：</p><pre><code class="hljs shell"><span class="hljs-meta">#</span><span class="bash"> cat /sys/class/net/enp129s0f1/device/infiniband_verbs/uverbs1/ibdev</span>qedr1<span class="hljs-meta">#</span><span class="bash"> ethtool -i enp129s0f1</span>driver: qedeversion: 8.33.0.20firmware-version: mfw 8.23.11.0 storm 8.37.2.0expansion-rom-version:bus-info: 0000:81:00.1supports-statistics: yessupports-test: yessupports-eeprom-access: nosupports-register-dump: yessupports-priv-flags: yes<span class="hljs-meta">#</span><span class="bash"> lspci -v | grep 81:00.1</span>81:00.1 Ethernet controller: QLogic Corp. FastLinQ QL41000 Series 10/25/40/50GbE Controller (rev 02)</code></pre>]]></content>
+    
+    
+    <categories>
+      
+      <category>AI</category>
+      
+    </categories>
+    
+    
+    <tags>
+      
+      <tag>RDMA</tag>
+      
+    </tags>
+    
+  </entry>
+  
+  
+  
+  <entry>
     <title>Kubernetes Pod支持RDMA网卡的几种方式</title>
     <link href="/2023/06/05/Kubernetes-Pod%E6%94%AF%E6%8C%81RDMA%E7%BD%91%E5%8D%A1%E7%9A%84%E5%87%A0%E7%A7%8D%E6%96%B9%E5%BC%8F/"/>
     <url>/2023/06/05/Kubernetes-Pod%E6%94%AF%E6%8C%81RDMA%E7%BD%91%E5%8D%A1%E7%9A%84%E5%87%A0%E7%A7%8D%E6%96%B9%E5%BC%8F/</url>

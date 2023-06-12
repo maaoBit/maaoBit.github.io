@@ -2,6 +2,13 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   
   <url>
+    <loc>https://maao.cloud/2023/06/12/%E6%9F%A5%E8%AF%A2RDMA%E7%BD%91%E5%8D%A1%E9%80%BB%E8%BE%91Port%E4%B8%8E%E7%89%A9%E7%90%86%E8%AE%BE%E5%A4%87%E6%98%A0%E5%B0%84%E7%9A%84%E5%87%A0%E7%A7%8D%E6%96%B9%E5%BC%8F/</loc>
+    
+    <lastmod>2023-06-12</lastmod>
+    
+  </url>
+  
+  <url>
     <loc>https://maao.cloud/2023/06/05/Kubernetes-Pod%E6%94%AF%E6%8C%81RDMA%E7%BD%91%E5%8D%A1%E7%9A%84%E5%87%A0%E7%A7%8D%E6%96%B9%E5%BC%8F/</loc>
     
     <lastmod>2023-06-05</lastmod>
@@ -109,7 +116,7 @@
 
   <url>
     <loc>https://maao.cloud/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
   </url>
@@ -117,77 +124,77 @@
   
   <url>
     <loc>https://maao.cloud/tags/BPF/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/tags/Cilium/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/tags/Kubernetes/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/tags/Kube-proxy/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/tags/IPVS/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/tags/Calico/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/tags/BGP/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/tags/MetalLB/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/tags/Controller/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/tags/Seccomp/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/tags/RDMA/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
@@ -196,35 +203,35 @@
   
   <url>
     <loc>https://maao.cloud/categories/kubernetes/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/categories/calico/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/categories/linux/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/categories/AI/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maao.cloud/categories/AI/Kubernetes/</loc>
-    <lastmod>2023-06-05</lastmod>
+    <lastmod>2023-06-12</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
