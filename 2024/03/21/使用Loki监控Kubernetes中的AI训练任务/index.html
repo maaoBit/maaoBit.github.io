@@ -1,0 +1,339 @@
+<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>使用Loki监控Kubernetes中的AI训练任务 - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item"><a class="nav-link" href="/about/"><i class="iconfont icon-user-fill"></i> 关于</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">使用Loki监控Kubernetes中的AI训练任务</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2024-03-21 14:20" pubdate>2024年3月21日 下午</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 2.2k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 33 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">使用Loki监控Kubernetes中的AI训练任务</h1><div class="markdown-body" id="post-body"><p>Loki是一个由Grafana Labs开发的开源日志聚合系统，旨在为云原生架构提供高效的日志处理解决方案。本文将介绍<strong>Loki</strong>的工作原理、部署方法以及如何在AI训练场景下利用它来监控训练日志。</p><a id="more"></a><h2 id="Loki"><a href="#Loki" class="headerlink" title="Loki"></a>Loki</h2><p>Loki使用类似Prometheus的标签索引机制来存储和查询日志数据，它能够快速地进行分布式查询和聚合，而不需要将所有数据都从存储中加载到内存中。相比之下，ELK需要维护一个大的索引，需要更多的存储空间。</p><p>一个典型的基于Loki的日志管理系统由3部分组成：</p><p><img src="/2024/03/21/%E4%BD%BF%E7%94%A8Loki%E7%9B%91%E6%8E%A7Kubernetes%E4%B8%AD%E7%9A%84AI%E8%AE%AD%E7%BB%83%E4%BB%BB%E5%8A%A1/loki-overview.png" srcset="/img/loading.gif"></p><ul><li>Agent：用来采集容器日志，一般是Promtail。</li><li>Loki：负责存储日志数据，提供HTTP API的日志查询、数据过滤及筛选能力。</li><li>Grafana：负责展示日志以及从日志中获取的指标。</li></ul><p>Loki内部组件包括：</p><p><img src="/2024/03/21/%E4%BD%BF%E7%94%A8Loki%E7%9B%91%E6%8E%A7Kubernetes%E4%B8%AD%E7%9A%84AI%E8%AE%AD%E7%BB%83%E4%BB%BB%E5%8A%A1/loki_architecture_components.svg" srcset="/img/loading.gif"></p><ul><li>分发器（Distributor）：负责处理客户端传入的日志流，是写入路径的第一站。分发器会验证日志流的正确性，并确保其符合租户（或全局）限制。验证后的数据块会被分批发送到多个接收器（Ingester）。</li><li>接收器（Ingester）：负责将日志数据写入长期存储后端（如DynamoDB,S3等），并在读取路径返回日志数据。接收器包含一个生命周期管理器，管理其在哈希环中的状态。</li><li>查询前端（Query Frontend）：可选服务，提供查询器API端点，用于加速读取路径。查询前端内部进行一些查询调整，并在内部队列中保留查询。</li><li>查询器（Querier）：处理使用LogQL查询语言的查询，从接收器和长期存储中获取日志。</li><li>Ruler：用于处理告警规则，根据日志产生告警。<h2 id="部署Loki"><a href="#部署Loki" class="headerlink" title="部署Loki"></a>部署Loki</h2></li></ul><p>通过Helm部署的Loki分两种模式：monolithic、scalable。<br>scalable模式如下图所示：将各个组件分成多个pod部署，以便于扩展。<br><img src="/2024/03/21/%E4%BD%BF%E7%94%A8Loki%E7%9B%91%E6%8E%A7Kubernetes%E4%B8%AD%E7%9A%84AI%E8%AE%AD%E7%BB%83%E4%BB%BB%E5%8A%A1/scalable-monolithic-mode.png" srcset="/img/loading.gif"></p><p>monolithic模式就是all in one，将所有组件使用一个pod部署。当使用monolithic模式的单实例部署时，可以使用本地的filesystem作为后端存储，否则，需要使用对象存储作为后端存储。<br><img src="/2024/03/21/%E4%BD%BF%E7%94%A8Loki%E7%9B%91%E6%8E%A7Kubernetes%E4%B8%AD%E7%9A%84AI%E8%AE%AD%E7%BB%83%E4%BB%BB%E5%8A%A1/monolithic-mode.png" srcset="/img/loading.gif"></p><p>本文使用monolithic模式的单实例进行演示。在部署loki之前，环境里已经通过<a target="_blank" rel="noopener" href="https://github.com/prometheus-operator/kube-prometheus">kube-prometheus</a>部署了Grafana、Alertmanager、Prometheus等。</p><div class="hljs"><pre><code class="hljs bash">$ kubectl get po -n monitoring
+NAME                                   READY   STATUS    RESTARTS   AGE
+alertmanager-main-0                    2/2     Running   0          3h35m
+blackbox-exporter-6b5475894-pjjvk      3/3     Running   0          3h42m
+grafana-64c4f67f5b-qv47b               1/1     Running   0          3h42m
+kube-state-metrics-65474fb4c6-d7wcn    3/3     Running   0          3h41m
+node-exporter-sm4tp                    2/2     Running   0          3h41m
+prometheus-adapter-74894c5547-c99wn    1/1     Running   0          3h41m
+prometheus-adapter-74894c5547-hggjt    1/1     Running   0          3h41m
+prometheus-k8s-0                       2/2     Running   0          3h39m
+prometheus-operator-5575b484df-mrtnm   2/2     Running   0          3h41m</code></pre></div><p>通过helm部署monolithic loki。</p><div class="hljs"><pre><code class="hljs bash">$ helm repo add grafana https://grafana.github.io/helm-charts
+$ helm repo update</code></pre></div><p>创建loki-value.yaml</p><div class="hljs"><pre><code class="hljs yaml"><span class="hljs-attr">loki:</span>
+  <span class="hljs-attr">commonConfig:</span>
+    <span class="hljs-attr">replication_factor:</span> <span class="hljs-number">1</span>
+  <span class="hljs-attr">storage:</span>
+    <span class="hljs-attr">type:</span> <span class="hljs-string">&#x27;filesystem&#x27;</span>
+  <span class="hljs-string">//</span> <span class="hljs-string">关闭鉴权，方便配置Grafana</span>
+  <span class="hljs-attr">auth_enabled:</span> <span class="hljs-literal">false</span>
+<span class="hljs-attr">singleBinary:</span>
+  <span class="hljs-attr">replicas:</span> <span class="hljs-number">1</span>
+<span class="hljs-attr">monitoring:</span>
+ <span class="hljs-string">//</span> <span class="hljs-string">默认会部署Grafana</span> <span class="hljs-string">Agent，这里关闭，后面单独部署promtail</span>
+  <span class="hljs-attr">selfMonitoring:</span>
+    <span class="hljs-attr">enabled:</span> <span class="hljs-literal">false</span>
+    <span class="hljs-attr">grafanaAgent:</span>
+      <span class="hljs-attr">installOperator:</span> <span class="hljs-literal">false</span>
+<span class="hljs-string">//</span> <span class="hljs-string">默认会部署Canary，用于对loki探活，这里关闭</span>
+  <span class="hljs-attr">lokiCanary:</span>
+    <span class="hljs-attr">enabled:</span> <span class="hljs-literal">false</span>
+<span class="hljs-string">//</span> <span class="hljs-string">关闭helm按照前的test</span>
+<span class="hljs-attr">test:</span>
+  <span class="hljs-attr">enabled:</span> <span class="hljs-literal">false</span>
+<span class="hljs-string">//</span> <span class="hljs-string">关闭gateway，因为没用到ingress</span>
+<span class="hljs-attr">gateway:</span>
+  <span class="hljs-attr">enabled:</span> <span class="hljs-literal">false</span></code></pre></div><p>安装loki</p><div class="hljs"><pre><code class="hljs bash">$ helm install --values loki-value.yaml loki grafana/loki</code></pre></div><p>创建promtail-value.yaml</p><div class="hljs"><pre><code class="hljs yaml"><span class="hljs-attr">config:</span>
+  <span class="hljs-comment"># publish data to loki</span>
+  <span class="hljs-attr">clients:</span>
+    <span class="hljs-bullet">-</span> <span class="hljs-attr">url:</span> <span class="hljs-string">http://loki.default.svc.cluster.local:3100/loki/api/v1/push</span>
+      <span class="hljs-attr">tenant_id:</span> <span class="hljs-number">1</span></code></pre></div><p>安装promtail</p><div class="hljs"><pre><code class="hljs bash">$ helm install --values promtail-values.yaml promtail grafana/promtail</code></pre></div><p>查看Pod</p><div class="hljs"><pre><code class="hljs angelscript">$ kubectl <span class="hljs-keyword">get</span> po
+NAME                                      READY   STATUS    RESTARTS   AGE
+loki<span class="hljs-number">-0</span>                                    <span class="hljs-number">1</span>/<span class="hljs-number">1</span>     Running   <span class="hljs-number">0</span>          <span class="hljs-number">23</span>h
+promtail-glm2t                            <span class="hljs-number">1</span>/<span class="hljs-number">1</span>     Running   <span class="hljs-number">0</span>          <span class="hljs-number">22</span>h</code></pre></div><p>配置Loki到Grafana中。新添Data sources<br><img src="/2024/03/21/%E4%BD%BF%E7%94%A8Loki%E7%9B%91%E6%8E%A7Kubernetes%E4%B8%AD%E7%9A%84AI%E8%AE%AD%E7%BB%83%E4%BB%BB%E5%8A%A1/grafana-add-data-sources.png" srcset="/img/loading.gif"></p><h2 id="训练样例"><a href="#训练样例" class="headerlink" title="训练样例"></a>训练样例</h2><p>接下来，我们部署training-operator，通过MNIST训练产生一些训练日志。</p><div class="hljs"><pre><code class="hljs bash">$ kubectl apply -k <span class="hljs-string">&quot;github.com/kubeflow/training-operator/manifests/overlays/standalone?ref=v1.7.0&quot;</span>
+$ kubectl get po -n kubeflow
+NAME                                 READY   STATUS      RESTARTS   AGE
+training-operator-64c768746c-gsqkf   1/1     Running     0          1s
+$ kubectl create -f https://raw.githubusercontent.com/kubeflow/training-operator/master/examples/pytorch/simple.yaml
+$ kubectl get po -n kubeflow
+NAME                                 READY   STATUS      RESTARTS   AGE
+pytorch-simple-master-0              0/1     Completed   0          22m
+pytorch-simple-worker-0              0/1     Completed   0          22m
+training-operator-64c768746c-gsqkf   1/1     Running     0          24m
+$ kubectl logs --tail 10 pytorch-simple-master-0 -n kubeflow
+2024-03-19T08:51:02Z INFO     Train Epoch: 1 [55040/60000 (92%)]	loss=0.6565
+2024-03-19T08:51:07Z INFO     Train Epoch: 1 [55680/60000 (93%)]	loss=0.5459
+2024-03-19T08:51:11Z INFO     Train Epoch: 1 [56320/60000 (94%)]	loss=0.5875
+2024-03-19T08:51:16Z INFO     Train Epoch: 1 [56960/60000 (95%)]	loss=0.5498
+2024-03-19T08:51:20Z INFO     Train Epoch: 1 [57600/60000 (96%)]	loss=0.7155
+2024-03-19T08:51:25Z INFO     Train Epoch: 1 [58240/60000 (97%)]	loss=0.7295
+2024-03-19T08:51:29Z INFO     Train Epoch: 1 [58880/60000 (98%)]	loss=0.8877
+2024-03-19T08:51:34Z INFO     Train Epoch: 1 [59520/60000 (99%)]	loss=0.5380
+2024-03-19T08:51:44Z INFO     &#123;metricName: accuracy, metricValue: 0.7312&#125;;&#123;metricName: loss, metricValue: 0.6644&#125;</code></pre></div><h2 id="获取loss信息"><a href="#获取loss信息" class="headerlink" title="获取loss信息"></a>获取loss信息</h2><p>在grafana中新建一个panel，执行如下LogQL进行查询。通过关键字Train过滤出训练的日志，通过pattern匹配其中的loss与step。</p><div class="hljs"><pre><code class="hljs dust"><span class="hljs-template-variable">&#123;app=&quot;pytorch-simple&quot;,pod=&quot;pytorch-simple-master-0&quot;&#125;</span><span class="xml"> |= &quot;Train&quot; | pattern &quot;<span class="hljs-tag">&lt;<span class="hljs-name">time</span>&gt;</span> <span class="hljs-tag">&lt;<span class="hljs-name">_</span>&gt;</span>     Train Epoch: 1 [<span class="hljs-tag">&lt;<span class="hljs-name">step</span>&gt;</span>/<span class="hljs-tag">&lt;<span class="hljs-name">_</span>&gt;</span> <span class="hljs-tag">&lt;<span class="hljs-name">_</span>&gt;</span>]	loss=<span class="hljs-tag">&lt;<span class="hljs-name">loss</span>&gt;</span>&quot; </span></code></pre></div><p><img src="/2024/03/21/%E4%BD%BF%E7%94%A8Loki%E7%9B%91%E6%8E%A7Kubernetes%E4%B8%AD%E7%9A%84AI%E8%AE%AD%E7%BB%83%E4%BB%BB%E5%8A%A1/grafana-log.png" srcset="/img/loading.gif"></p><p>接下来通过Extract fields、Convert field type、Sort by三个Transform来提取label并整形。可以使用Table样式查看。<br><img src="/2024/03/21/%E4%BD%BF%E7%94%A8Loki%E7%9B%91%E6%8E%A7Kubernetes%E4%B8%AD%E7%9A%84AI%E8%AE%AD%E7%BB%83%E4%BB%BB%E5%8A%A1/grafana-transform.png" srcset="/img/loading.gif"></p><p>使用XY Chart进行绘制。<br><img src="/2024/03/21/%E4%BD%BF%E7%94%A8Loki%E7%9B%91%E6%8E%A7Kubernetes%E4%B8%AD%E7%9A%84AI%E8%AE%AD%E7%BB%83%E4%BB%BB%E5%8A%A1/grafana-xychart.png" srcset="/img/loading.gif"></p><p>修改下X、Y的data，使用Lines的方式进行显示。最终我们就获取到一个训练任务中step-loss的可视图。<br><img src="/2024/03/21/%E4%BD%BF%E7%94%A8Loki%E7%9B%91%E6%8E%A7Kubernetes%E4%B8%AD%E7%9A%84AI%E8%AE%AD%E7%BB%83%E4%BB%BB%E5%8A%A1/grafana-xychart2.png" srcset="/img/loading.gif"></p><h2 id="监控、分析报错"><a href="#监控、分析报错" class="headerlink" title="监控、分析报错"></a>监控、分析报错</h2><p>通过Loki的Ruler组件，可以实现基于日志的告警功能。可以实现对训练任务所在namespace下，所有pod的日志监控。</p><p>首先修改Loki配置，配置ruler</p><div class="hljs"><pre><code class="hljs bash">$ kubectl edit cm loki</code></pre></div><p>ruler部分修改如下</p><div class="hljs"><pre><code class="hljs yaml"><span class="hljs-string">...</span>
+    <span class="hljs-attr">ruler:</span>
+      <span class="hljs-attr">storage:</span>
+        <span class="hljs-attr">type:</span> <span class="hljs-string">local</span>
+        <span class="hljs-attr">local:</span>
+          <span class="hljs-attr">directory:</span> <span class="hljs-string">/etc/loki/rules</span>
+      <span class="hljs-attr">alertmanager_url:</span> <span class="hljs-string">http://alertmanager-main.monitoring.svc.cluster.local:9093</span>
+      <span class="hljs-attr">ring:</span>
+        <span class="hljs-attr">kvstore:</span>
+          <span class="hljs-attr">store:</span> <span class="hljs-string">inmemory</span>
+      <span class="hljs-attr">enable_alertmanager_v2:</span> <span class="hljs-literal">true</span>
+<span class="hljs-string">...</span></code></pre></div><p>创建一个告警规则，当日志中出现error、fail、failed、invalid等字符时，触发告警。</p><div class="hljs"><pre><code class="hljs bash">$ kubectl create cm loki-rules --from-file=<span class="hljs-built_in">log</span>-alert.yml
+configmap/loki-ruler created
+$ kubectl get cm loki-rules
+NAME         DATA   AGE
+loki-rules   1      11s
+$ kubectl get cm loki-rules -o yaml
+apiVersion: v1
+data:
+  <span class="hljs-built_in">log</span>-alert.yml: |
+    groups:
+      - name: training-log-alert
+        rules:
+        - alert: errorLog
+          expr: count_over_time(&#123;namespace=<span class="hljs-string">&quot;kubeflow&quot;</span>&#125; |~ <span class="hljs-string">&quot;^.*(?i)(error|fail|failed|invalid).*$&quot;</span> [1m]) &gt; 0
+          <span class="hljs-keyword">for</span>: 0m
+          labels:
+            severity: critical
+            instance: <span class="hljs-string">&quot;&#123;&#123; <span class="hljs-variable">$labels</span>.job &#125;&#125;&quot;</span>
+          annotations:
+            summary: <span class="hljs-string">&quot;get error log in pod&quot;</span>
+            description:  <span class="hljs-string">&quot;get error &#123;&#123; <span class="hljs-variable">$value</span> &#125;&#125; log in pod &#123;&#123; <span class="hljs-variable">$labels</span>.pod &#125;&#125; in namespace &#123;&#123; <span class="hljs-variable">$labels</span>.namespace &#125;&#125; in the last minute&quot;</span>
+kind: ConfigMap
+metadata:
+  creationTimestamp: <span class="hljs-string">&quot;2024-03-21T01:24:15Z&quot;</span>
+  name: loki-ruler
+  namespace: default
+  resourceVersion: <span class="hljs-string">&quot;6445339&quot;</span>
+  uid: 55f7be3a-1e41-4b47-bb9e-637191bc967e</code></pre></div><p>接着重新创建<code>pytorch-simple</code>，并在训练过程中，删除worker，以产生故障日志。</p><div class="hljs"><pre><code class="hljs bash">$ kubectl delete -f https://raw.githubusercontent.com/kubeflow/training-operator/master/examples/pytorch/simple.yaml
+$ kubectl create -f https://raw.githubusercontent.com/kubeflow/training-operator/master/examples/pytorch/simple.yaml
+$ kubectl delete po pytorch-simple-worker-0 -n kubeflow</code></pre></div><p>查看master日志，可以看到保存日志已产生</p><div class="hljs"><pre><code class="hljs bash">$ kubectl logs --tail 10 pytorch-simple-master-0 -n kubeflow
+2024-03-21T01:39:55Z INFO     Train Epoch: 1 [12160/60000 (20%)]	loss=1.0480
+2024-03-21T01:39:59Z INFO     Train Epoch: 1 [12800/60000 (21%)]	loss=1.3666
+Traceback (most recent call last):
+  File <span class="hljs-string">&quot;/opt/pytorch-mnist/mnist.py&quot;</span>, line 171, <span class="hljs-keyword">in</span> &lt;module&gt;
+    main()
+  File <span class="hljs-string">&quot;/opt/pytorch-mnist/mnist.py&quot;</span>, line 163, <span class="hljs-keyword">in</span> main
+    train(args, model, device, train_loader, optimizer, epoch)
+  File <span class="hljs-string">&quot;/opt/pytorch-mnist/mnist.py&quot;</span>, line 43, <span class="hljs-keyword">in</span> train
+    loss.backward()
+  File <span class="hljs-string">&quot;/opt/conda/lib/python3.6/site-packages/torch/tensor.py&quot;</span>, line 102, <span class="hljs-keyword">in</span> backward
+    torch.autograd.backward(self, gradient, retain_graph, create_graph)
+  File <span class="hljs-string">&quot;/opt/conda/lib/python3.6/site-packages/torch/autograd/__init__.py&quot;</span>, line 90, <span class="hljs-keyword">in</span> backward
+    allow_unreachable=True)  <span class="hljs-comment"># allow_unreachable flag</span>
+  File <span class="hljs-string">&quot;/opt/conda/lib/python3.6/site-packages/torch/nn/parallel/distributed_cpu.py&quot;</span>, line 92, <span class="hljs-keyword">in</span> allreduce_params
+    dist.all_reduce(coalesced)
+  File <span class="hljs-string">&quot;/opt/conda/lib/python3.6/site-packages/torch/distributed/distributed_c10d.py&quot;</span>, line 838, <span class="hljs-keyword">in</span> all_reduce
+    work.wait()
+RuntimeError: [/opt/conda/conda-bld/pytorch_1544199946412/work/third_party/gloo/gloo/transport/tcp/pair.cc:543] Connection closed by peer [10.0.0.252]:16575</code></pre></div><p>进入alertManager，可以看到相应告警。<br><img src="/2024/03/21/%E4%BD%BF%E7%94%A8Loki%E7%9B%91%E6%8E%A7Kubernetes%E4%B8%AD%E7%9A%84AI%E8%AE%AD%E7%BB%83%E4%BB%BB%E5%8A%A1/loki-alert-manager.png" srcset="/img/loading.gif"></p><p>可以修改<code>loki-rules</code>ConfigMap，添加更多的告警规则。比如根据日志的warning数量来产生告警。</p><div class="hljs"><pre><code class="hljs bash">$ kubectl get cm loki-rules -o yaml
+apiVersion: v1
+data:
+  <span class="hljs-built_in">log</span>-alert.yml: |
+    groups:
+      - name: training-log-alert
+        rules:
+        - alert: errorLog
+          expr: count_over_time(&#123;namespace=<span class="hljs-string">&quot;kubeflow&quot;</span>&#125; |~ <span class="hljs-string">&quot;^.*(?i)(error|fail|failed|invalid).*$&quot;</span> [1m]) &gt; 0
+          <span class="hljs-keyword">for</span>: 0m
+          labels:
+            severity: critical
+            instance: <span class="hljs-string">&quot;&#123;&#123; <span class="hljs-variable">$labels</span>.job &#125;&#125;&quot;</span>
+          annotations:
+            summary: <span class="hljs-string">&quot;get error log in pod&quot;</span>
+            description:  <span class="hljs-string">&quot;get error &#123;&#123; <span class="hljs-variable">$value</span> &#125;&#125; log in pod &#123;&#123; <span class="hljs-variable">$labels</span>.pod &#125;&#125; in namespace &#123;&#123; <span class="hljs-variable">$labels</span>.namespace &#125;&#125; in the last minute&quot;</span>
+        - alert: tooMuchWarningLog
+          expr:  sum(rate(&#123;namespace=<span class="hljs-string">&quot;kubeflow&quot;</span>&#125; |~ <span class="hljs-string">&quot;^.*(?i)(warning).*$&quot;</span> [5m])) by (job) / sum(rate(&#123;namespace=<span class="hljs-string">&quot;kubeflow&quot;</span>&#125; [5m])) by (job) &gt; 0.05
+          <span class="hljs-keyword">for</span>: 0m
+          labels:
+            severity: warning
+            instance: <span class="hljs-string">&quot;&#123;&#123; <span class="hljs-variable">$labels</span>.job &#125;&#125;&quot;</span>
+          annotations:
+            summary: <span class="hljs-string">&quot;get too many warning in pod&quot;</span>
+            description:  <span class="hljs-string">&quot;pod &#123;&#123; <span class="hljs-variable">$labels</span>.pod &#125;&#125; in namespace &#123;&#123; <span class="hljs-variable">$labels</span>.namespace &#125;&#125; has encountered &#123;&#123; printf \&quot;%.2f\&quot; <span class="hljs-variable">$value</span> &#125;&#125; warning log in the last 5 minute&quot;</span>
+kind: ConfigMap
+metadata:
+  creationTimestamp: <span class="hljs-string">&quot;2024-03-21T01:27:48Z&quot;</span>
+  name: loki-rules
+  namespace: default
+  resourceVersion: <span class="hljs-string">&quot;6480454&quot;</span>
+  uid: b70535fa-e44f-4727-ab7e-4f17fe75ba34</code></pre></div><p>修改configmap后，在kubelet重新remount之后，loki会自动更新告警规则。从loki的日志中可见相应的更新日志。<br><img src="/2024/03/21/%E4%BD%BF%E7%94%A8Loki%E7%9B%91%E6%8E%A7Kubernetes%E4%B8%AD%E7%9A%84AI%E8%AE%AD%E7%BB%83%E4%BB%BB%E5%8A%A1/loki-update-alert-rule.png" srcset="/img/loading.gif"></p><p>在grafana中可以看到告警规则已更新。<br><img src="/2024/03/21/%E4%BD%BF%E7%94%A8Loki%E7%9B%91%E6%8E%A7Kubernetes%E4%B8%AD%E7%9A%84AI%E8%AE%AD%E7%BB%83%E4%BB%BB%E5%8A%A1/grafana-update-alert.png" srcset="/img/loading.gif"></p></div><hr><div><div class="post-metas mb-3"><div class="post-meta mr-3"><i class="iconfont icon-category"></i> <a class="hover-with-bg" href="/categories/Kubernetes/">Kubernetes</a> <a class="hover-with-bg" href="/categories/Kubernetes/AI/">AI</a></div><div class="post-meta"><i class="iconfont icon-tags"></i> <a class="hover-with-bg" href="/tags/Kubernetes/">Kubernetes</a> <a class="hover-with-bg" href="/tags/AI/">AI</a></div></div><p class="note note-warning">转载请注明出处</p><div class="post-prevnext row"><article class="post-prev col-6"></article><article class="post-next col-6"> <a href="/2023/06/12/%E6%9F%A5%E8%AF%A2RDMA%E7%BD%91%E5%8D%A1%E9%80%BB%E8%BE%91Port%E4%B8%8E%E7%89%A9%E7%90%86%E8%AE%BE%E5%A4%87%E6%98%A0%E5%B0%84%E7%9A%84%E5%87%A0%E7%A7%8D%E6%96%B9%E5%BC%8F/"><span class="hidden-mobile">查询RDMA网卡逻辑Port与物理设备映射的几种方式</span> <span class="visible-mobile">下一篇</span><i class="iconfont icon-arrowright"></i></a></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
+  (function () {
+    // 查询存储的记录
+    function getRecord(Counter, target) {
+      return new Promise(function (resolve, reject) {
+        Counter('get', '/classes/Counter?where=' + encodeURIComponent(JSON.stringify({target})))
+          .then(resp => resp.json())
+          .then(({results, code, error}) => {
+            if (code === 401) {
+              throw error;
+            }
+            if (results && results.length > 0) {
+              var record = results[0];
+              resolve(record);
+            } else {
+              Counter('post', '/classes/Counter', {target, time: 0})
+                .then(resp => resp.json())
+                .then((record, error) => {
+                  if (error) {
+                    throw error;
+                  }
+                  resolve(record);
+                }).catch(error => {
+                console.error('Failed to create', error);
+                reject(error);
+              });
+            }
+          }).catch((error) => {
+          console.error('LeanCloud Counter Error:', error);
+          reject(error);
+        });
+      })
+    }
+
+    // 发起自增请求
+    function increment(Counter, incrArr) {
+      return new Promise(function (resolve, reject) {
+        Counter('post', '/batch', {
+          "requests": incrArr
+        }).then((res) => {
+          res = res.json();
+          if (res.error) {
+            throw res.error;
+          }
+          resolve(res);
+        }).catch((error) => {
+          console.error('Failed to save visitor count', error);
+          reject(error);
+        });
+      });
+    }
+
+    // 构建自增请求体
+    function buildIncrement(objectId) {
+      return {
+        "method": "PUT",
+        "path": `/1.1/classes/Counter/${ objectId }`,
+        "body": {
+          "time": {
+            '__op': 'Increment',
+            'amount': 1
+          }
+        }
+      }
+    }
+
+    // 校验是否为有效的 UV
+    function validUV() {
+      var key = 'LeanCloud_UV_Flag';
+      var flag = localStorage.getItem(key);
+      if (flag) {
+        // 距离标记小于 24 小时则不计为 UV
+        if (new Date().getTime() - parseInt(flag) <= 86400000) {
+          return false;
+        }
+      }
+      localStorage.setItem(key, new Date().getTime().toString());
+      return true;
+    }
+
+    function addCount(Counter) {
+      var enableIncr = 'true' === 'true' && window.location.hostname !== 'localhost';
+      var getterArr = [];
+      var incrArr = [];
+
+      // 请求 PV 并自增
+      var pvCtn = document.querySelector('#leancloud-site-pv-container');
+      if (pvCtn || enableIncr) {
+        var pvGetter = getRecord(Counter, 'site-pv').then((record) => {
+          incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-pv');
+          if (ele) {
+            ele.innerText = record.time + 1;
+            if (pvCtn) {
+              pvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(pvGetter);
+      }
+
+      // 请求 UV 并自增
+      var uvCtn = document.querySelector('#leancloud-site-uv-container');
+      if (uvCtn || enableIncr) {
+        var uvGetter = getRecord(Counter, 'site-uv').then((record) => {
+          var vuv = validUV();
+          vuv && incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-uv');
+          if (ele) {
+            ele.innerText = record.time + (vuv ? 1 : 0);
+            if (uvCtn) {
+              uvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(uvGetter);
+      }
+
+      // 如果是文章，请求文章的浏览数，并自增
+      if ('true' === 'true') {
+        var viewCtn = document.querySelector('#leancloud-post-views-container');
+        if (viewCtn || enableIncr) {
+          var target = decodeURI('/2024/03/21/%E4%BD%BF%E7%94%A8Loki%E7%9B%91%E6%8E%A7Kubernetes%E4%B8%AD%E7%9A%84AI%E8%AE%AD%E7%BB%83%E4%BB%BB%E5%8A%A1/');
+          var viewGetter = getRecord(Counter, target).then((record) => {
+            incrArr.push(buildIncrement(record.objectId))
+            if (viewCtn) {
+              var ele = document.querySelector('#leancloud-post-views');
+              if (ele) {
+                ele.innerText = (record.time || 0) + 1;
+                viewCtn.style.display = 'inline';
+              }
+            }
+          });
+          getterArr.push(viewGetter);
+        }
+      }
+
+      // 如果启动计数自增，批量发起自增请求
+      if (enableIncr) {
+        Promise.all(getterArr).then(() => {
+          incrArr.length > 0 && increment(Counter, incrArr);
+        })
+      }
+    }
+
+    var app_id = 'rGBkjlpYFYPq3Mztf0uHkwm2-gzGzoHsz'
+    var app_key = 'IwuJ6qbGLXA8pB3qeHHjuDT3'
+    var server_url = 'https://rgbkjlpy.lc-cn-n1-shared.com'
+
+    function fetchData(api_server) {
+      var Counter = (method, url, data) => {
+        return fetch(`${ api_server }/1.1${ url }`, {
+          method,
+          headers: {
+            'X-LC-Id': app_id,
+            'X-LC-Key': app_key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data)
+        });
+      };
+
+      addCount(Counter);
+    }
+
+    var api_server = app_id.slice(-9) !== '-MdYXbMMI' ? server_url : `https://${ app_id.slice(0, 8).toLowerCase() }.api.lncldglobal.com`;
+
+    if (api_server) {
+      fetchData(api_server);
+    } else {
+      fetch('https://app-router.leancloud.cn/2/route?appId=' + app_id)
+        .then(resp => resp.json())
+        .then(({api_server}) => {
+          fetchData('https://' + api_server);
+        });
+    }
+  })();
+</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>
