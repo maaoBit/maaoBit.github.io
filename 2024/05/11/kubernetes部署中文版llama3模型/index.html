@@ -1,0 +1,427 @@
+<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>kubernetes部署中文版llama3模型 - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item"><a class="nav-link" href="/about/"><i class="iconfont icon-user-fill"></i> 关于</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">kubernetes部署中文版llama3模型</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2024-05-11 10:46" pubdate>2024年5月11日 上午</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 1.7k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 27 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">kubernetes部署中文版llama3模型</h1><div class="markdown-body" id="post-body"><p>在Kubernetes环境中通过ollama与lobe-chat，部署一个自定义的llama3模型。</p><a id="more"></a><p>在这篇文章中，我们将从hugging face下载一个llama3的中文版模型，最终通过<a target="_blank" rel="noopener" href="https://ollama.com/">Ollama</a>和<a target="_blank" rel="noopener" href="https://lobehub.com/zh">LobeChat</a>部署在Kubernetes集群中。</p><h2 id="环境信息"><a href="#环境信息" class="headerlink" title="环境信息"></a>环境信息</h2><p>测试环境使用了一个单节点的k8s集群，并且不带GPU，得益于GGML，使用CPU运行llama3也能相当流畅。</p><div class="hljs"><pre><code class="hljs angelscript">$ kubectl <span class="hljs-keyword">get</span> node -o wide
+NAME       STATUS   ROLES           AGE    VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION      CONTAINER-RUNTIME
+maao-dev   Ready    control-plane   <span class="hljs-number">224</span>d   v1<span class="hljs-number">.28</span><span class="hljs-number">.2</span>   <span class="hljs-number">192.168</span><span class="hljs-number">.2</span><span class="hljs-number">.2</span>   &lt;none&gt;        Ubuntu <span class="hljs-number">20.04</span><span class="hljs-number">.4</span> LTS   <span class="hljs-number">5.15</span><span class="hljs-number">.0</span><span class="hljs-number">-75</span>-generic   containerd:<span class="hljs-comment">//1.6.18</span>
+$ ollama -v
+ollama version <span class="hljs-keyword">is</span> <span class="hljs-number">0.1</span><span class="hljs-number">.31</span>
+$ uname -a
+Linux maao-dev <span class="hljs-number">5.15</span><span class="hljs-number">.0</span><span class="hljs-number">-75</span>-generic #<span class="hljs-number">82</span>~<span class="hljs-number">20.04</span><span class="hljs-number">.1</span>-Ubuntu SMP Wed Jun <span class="hljs-number">7</span> <span class="hljs-number">19</span>:<span class="hljs-number">37</span>:<span class="hljs-number">37</span> UTC <span class="hljs-number">2023</span> x86_64 x86_64 x86_64 GNU/Linux</code></pre></div><h2 id="制作、上传ollama模型"><a href="#制作、上传ollama模型" class="headerlink" title="制作、上传ollama模型"></a>制作、上传ollama模型</h2><p>在制作ollama模型执行，先按照<a target="_blank" rel="noopener" href="https://ollama.com/download/linux">官方文档</a>安装ollama。</p><p>接着从<a target="_blank" rel="noopener" href="https://huggingface.co/zhouzr/Llama3-8B-Chinese-Chat-GGUF">zhouzr/Llama3-8B-Chinese-Chat-GGUF · Hugging Face</a>上，下载模型，我选择的是<code>Llama3-8B-Chinese-Chat.q4_k_m.GGUF</code>这个版本，以节省内存。</p><p>接下来需要制作ollama模型，创建如下的Modelfile，放到<code>Llama3-8B-Chinese-Chat.q4_k_m.GGUF</code>相同的目录下：</p><div class="hljs"><pre><code class="hljs bash">$ ls
+Llama3-8B-Chinese-Chat.q5_k_m.GGUF  Modelfile
+
+$ cat Modelfile
+FROM ./Llama3-8B-Chinese-Chat.q5_k_m.GGUF
+TEMPLATE <span class="hljs-string">&quot;&quot;</span><span class="hljs-string">&quot;</span>
+<span class="hljs-string">&#123;&#123; if .System &#125;&#125;&lt;|start_header_id|&gt;system&lt;|end_header_id|&gt;</span>
+<span class="hljs-string">&#123;&#123; .System &#125;&#125;&lt;|eot_id|&gt;&#123;&#123; end &#125;&#125;&#123;&#123; if .Prompt &#125;&#125;&lt;|start_header_id|&gt;user&lt;|end_header_id|&gt;</span>
+<span class="hljs-string">&#123;&#123; .Prompt &#125;&#125;&lt;|eot_id|&gt;&#123;&#123; end &#125;&#125;&lt;|start_header_id|&gt;assistant&lt;|end_header_id|&gt;</span>
+<span class="hljs-string">&#123;&#123; .Response &#125;&#125;&lt;|eot_id|&gt;</span>
+<span class="hljs-string">&quot;</span><span class="hljs-string">&quot;&quot;</span>
+SYSTEM <span class="hljs-string">&quot;&quot;</span><span class="hljs-string">&quot;你是一个疯狂的科学家大卫，你总是为了毁灭宇宙而努力。&quot;</span><span class="hljs-string">&quot;&quot;</span></code></pre></div><p><code>TEMPLATE</code>直接使用ollama library里llama3的<a target="_blank" rel="noopener" href="https://ollama.com/library/llama3:8b/blobs/8ab4849b038c">template</a>，通过SYSTEM加入system message。</p><p>接下来创建llama3-chinese的model</p><div class="hljs"><pre><code class="hljs bash">$ ollama create llama3-Chinese:8B -f Modelfile</code></pre></div><p>待创建成功后，查看模型</p><div class="hljs"><pre><code class="hljs angelscript">$ ollama list
+NAME                                   	ID          	SIZE  	MODIFIED
+llama3-Chinese:<span class="hljs-number">8</span>B                      	<span class="hljs-number">1</span>cfcd2becfd0	<span class="hljs-number">5.7</span> GB	<span class="hljs-number">17</span> hours ago</code></pre></div><p>接着我们将模型上传到仓库。ollama模型兼容registry，你可以像保存容器镜像那样保存，从registry仓库中push或pull model，但ollama目前无法通过harbor保存。</p><p>启动一个docker registry</p><div class="hljs"><pre><code class="hljs bash">$ docker run -d -p 5000:5000 --name registry registry:2</code></pre></div><p>接下来将模型上传到registry</p><div class="hljs"><pre><code class="hljs groovy">$ ollama cp llama3-<span class="hljs-attr">Chinese:</span><span class="hljs-number">8</span>B <span class="hljs-attr">localhost:</span><span class="hljs-number">5000</span><span class="hljs-regexp">/ollama/</span>llama3-<span class="hljs-attr">chinese:</span><span class="hljs-number">8</span>b
+$ ollama push <span class="hljs-attr">localhost:</span><span class="hljs-number">5000</span><span class="hljs-regexp">/ollama/</span>llama3-<span class="hljs-attr">chinese:</span><span class="hljs-number">8</span>b</code></pre></div><blockquote><p><code>ollama cp</code>命令我在mac上执行会报错<br> <code>Error: destination &quot;llama3-Chinese:8B&quot; is invalid</code><br> 但linux就没问题，暂时不清楚原因</p></blockquote><h2 id="部署ollama"><a href="#部署ollama" class="headerlink" title="部署ollama"></a>部署ollama</h2><p>创建测试的namespace。</p><div class="hljs"><pre><code class="hljs bash">$ kubectl create ns ollama</code></pre></div><p>创建ollama deploy使用的pvc，用于保存model。我这里是单节点，使用<code>local-storage</code>作为演示。具体的storageClass、pv、pvc如下：</p><div class="hljs"><pre><code class="hljs YAML"><span class="hljs-meta">---</span>
+<span class="hljs-attr">apiVersion:</span> <span class="hljs-string">v1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">PersistentVolume</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">ollama-pv</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">capacity:</span>
+    <span class="hljs-attr">storage:</span> <span class="hljs-string">30Gi</span>
+  <span class="hljs-attr">storageClassName:</span> <span class="hljs-string">local-storage</span>
+  <span class="hljs-attr">accessModes:</span>
+  <span class="hljs-bullet">-</span> <span class="hljs-string">ReadWriteOnce</span>
+  <span class="hljs-attr">hostPath:</span>
+    <span class="hljs-attr">path:</span> <span class="hljs-string">/tmp/ollama-pv</span>
+
+<span class="hljs-meta">---</span>
+<span class="hljs-attr">apiVersion:</span> <span class="hljs-string">v1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">PersistentVolumeClaim</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">ollama-pvc</span>
+  <span class="hljs-attr">namespace:</span> <span class="hljs-string">ollama</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">accessModes:</span>
+    <span class="hljs-bullet">-</span> <span class="hljs-string">ReadWriteOnce</span>
+  <span class="hljs-attr">resources:</span>
+    <span class="hljs-attr">requests:</span>
+      <span class="hljs-attr">storage:</span> <span class="hljs-string">&quot;30Gi&quot;</span>
+
+<span class="hljs-meta">---</span>
+<span class="hljs-attr">apiVersion:</span> <span class="hljs-string">storage.k8s.io/v1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">StorageClass</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">annotations:</span>
+    <span class="hljs-attr">storageclass.kubernetes.io/is-default-class:</span> <span class="hljs-string">&quot;true&quot;</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">local-storage</span>
+<span class="hljs-attr">provisioner:</span> <span class="hljs-string">kubernetes.io/no-provisioner</span>
+<span class="hljs-attr">reclaimPolicy:</span> <span class="hljs-string">Delete</span>
+<span class="hljs-attr">volumeBindingMode:</span> <span class="hljs-string">WaitForFirstConsumer</span></code></pre></div><p>查看pvc</p><div class="hljs"><pre><code class="hljs bash">$ kubectl get pvc -A
+NAMESPACE   NAME         STATUS   VOLUME      CAPACITY   ACCESS MODES   STORAGECLASS    AGE
+ollama      ollama-pvc   Bound    ollama-pv   30Gi       RWO            <span class="hljs-built_in">local</span>-storage   53s</code></pre></div><p>创建ollama deployment与service，yaml如下：</p><div class="hljs"><pre><code class="hljs YAML"><span class="hljs-meta">---</span>
+<span class="hljs-attr">apiVersion:</span> <span class="hljs-string">v1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">Service</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">ollama-svc</span>
+  <span class="hljs-attr">namespace:</span> <span class="hljs-string">ollama</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">type:</span> <span class="hljs-string">NodePort</span>
+  <span class="hljs-attr">ports:</span>
+    <span class="hljs-bullet">-</span> <span class="hljs-attr">port:</span> <span class="hljs-number">11434</span>
+      <span class="hljs-attr">targetPort:</span> <span class="hljs-number">11434</span>
+      <span class="hljs-attr">protocol:</span> <span class="hljs-string">TCP</span>
+      <span class="hljs-attr">name:</span> <span class="hljs-string">http</span>
+  <span class="hljs-attr">selector:</span>
+    <span class="hljs-attr">app.kubernetes.io/name:</span> <span class="hljs-string">ollama</span>
+<span class="hljs-meta">---</span>
+<span class="hljs-attr">apiVersion:</span> <span class="hljs-string">apps/v1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">Deployment</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">ollama-deploy</span>
+  <span class="hljs-attr">namespace:</span> <span class="hljs-string">ollama</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">replicas:</span> <span class="hljs-number">1</span>
+  <span class="hljs-attr">selector:</span>
+    <span class="hljs-attr">matchLabels:</span>
+      <span class="hljs-attr">app.kubernetes.io/name:</span> <span class="hljs-string">ollama</span>
+  <span class="hljs-attr">template:</span>
+    <span class="hljs-attr">metadata:</span>
+      <span class="hljs-attr">labels:</span>
+        <span class="hljs-attr">app.kubernetes.io/name:</span> <span class="hljs-string">ollama</span>
+    <span class="hljs-attr">spec:</span>
+      <span class="hljs-attr">containers:</span>
+        <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">ollama</span>
+          <span class="hljs-attr">image:</span> <span class="hljs-string">&quot;ollama/ollama:0.1.32&quot;</span>
+          <span class="hljs-attr">imagePullPolicy:</span> <span class="hljs-string">IfNotPresent</span>
+          <span class="hljs-attr">ports:</span>
+            <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">http</span>
+              <span class="hljs-attr">containerPort:</span> <span class="hljs-number">11434</span>
+              <span class="hljs-attr">protocol:</span> <span class="hljs-string">TCP</span>
+          <span class="hljs-attr">livenessProbe:</span>
+            <span class="hljs-attr">httpGet:</span>
+              <span class="hljs-attr">path:</span> <span class="hljs-string">/</span>
+              <span class="hljs-attr">port:</span> <span class="hljs-string">http</span>
+          <span class="hljs-attr">readinessProbe:</span>
+            <span class="hljs-attr">httpGet:</span>
+              <span class="hljs-attr">path:</span> <span class="hljs-string">/</span>
+              <span class="hljs-attr">port:</span> <span class="hljs-string">http</span>
+          <span class="hljs-attr">resources:</span>
+            <span class="hljs-attr">limits:</span>
+              <span class="hljs-attr">cpu:</span> <span class="hljs-number">8</span>
+              <span class="hljs-attr">memory:</span> <span class="hljs-string">8Gi</span>
+            <span class="hljs-attr">requests:</span>
+              <span class="hljs-attr">cpu:</span> <span class="hljs-string">100m</span>
+              <span class="hljs-attr">memory:</span> <span class="hljs-string">128Mi</span>
+          <span class="hljs-attr">env:</span>
+          <span class="hljs-comment"># ollama server允许所有地址的请求</span>
+            <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">OLLAMA_ORIGINS</span>
+              <span class="hljs-attr">value:</span> <span class="hljs-string">&quot;*&quot;</span>
+          <span class="hljs-comment"># ollama server的监听地址</span>
+            <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">OLLAMA_HOST</span>
+              <span class="hljs-attr">value:</span> <span class="hljs-string">&quot;0.0.0.0&quot;</span>
+          <span class="hljs-comment"># ollama模型默认保存在~/.ollama目录下，将上面创建的卷挂载到.ollama</span>
+          <span class="hljs-attr">volumeMounts:</span>
+            <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">llm-data</span>
+              <span class="hljs-attr">mountPath:</span> <span class="hljs-string">/root/.ollama</span>
+      <span class="hljs-attr">volumes:</span>
+        <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">llm-data</span>
+          <span class="hljs-attr">persistentVolumeClaim:</span>
+            <span class="hljs-attr">claimName:</span> <span class="hljs-string">ollama-pvc</span></code></pre></div><p>查看ollama pod与service</p><div class="hljs"><pre><code class="hljs routeros">$ kubectl <span class="hljs-builtin-name">get</span> po -n ollama
+NAME                             READY   STATUS    RESTARTS   AGE
+ollama-deploy-6f69784c57-8bx84   1/1     Running   0          104s
+$ kubectl <span class="hljs-builtin-name">get</span> svc -n ollama
+NAME        <span class="hljs-built_in"> TYPE </span>      CLUSTER-IP      EXTERNAL-IP   PORT(S)           AGE
+ollama-svc   NodePort   10.97.150.120   &lt;none&gt;        11434:32532/TCP   111s</code></pre></div><p>接下来创建一个job，用于在ollama pod启动后，拉取我们刚才的model。</p><div class="hljs"><pre><code class="hljs YAML"><span class="hljs-attr">apiVersion:</span> <span class="hljs-string">batch/v1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">Job</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">ollama-llm-puller</span>
+  <span class="hljs-attr">namespace:</span> <span class="hljs-string">ollama</span>
+  <span class="hljs-attr">labels:</span>
+    <span class="hljs-attr">app.kubernetes.io/name:</span> <span class="hljs-string">ollama</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">ttlSecondsAfterFinished:</span> <span class="hljs-number">100</span>
+  <span class="hljs-attr">template:</span>
+    <span class="hljs-attr">spec:</span>
+      <span class="hljs-attr">containers:</span>
+      <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">llm-puller</span>
+        <span class="hljs-attr">image:</span> <span class="hljs-string">alpine</span>
+        <span class="hljs-attr">command:</span>
+        <span class="hljs-bullet">-</span> <span class="hljs-string">/bin/sh</span>
+        <span class="hljs-bullet">-</span> <span class="hljs-string">-c</span>
+        <span class="hljs-bullet">-</span> <span class="hljs-string">|</span>
+          <span class="hljs-string">set</span> <span class="hljs-string">-e</span>
+          <span class="hljs-string">apk</span> <span class="hljs-string">add</span> <span class="hljs-string">--no-cache</span> <span class="hljs-string">curl</span>
+          <span class="hljs-string">ollama_service=&quot;http://ollama-svc:11434&quot;</span>
+          <span class="hljs-string">while</span> [[ <span class="hljs-string">&quot;$(curl -s -o /dev/null -w &#x27;&#x27;<span class="hljs-template-variable">%&#123;http_code&#125;</span>&#x27;&#x27; $&#123;ollama_service&#125;)&quot;</span> <span class="hljs-type">!=</span> <span class="hljs-string">&quot;200&quot;</span> ]]<span class="hljs-string">;</span> <span class="hljs-string">do</span>
+            <span class="hljs-string">echo</span> <span class="hljs-string">&quot;Waiting for Ollama service to be ready...&quot;</span>
+            <span class="hljs-string">sleep</span> <span class="hljs-number">5</span>
+          <span class="hljs-string">done</span>
+          <span class="hljs-string">echo</span> <span class="hljs-string">&quot;Pulling model: llama3-chinese&quot;</span>
+          <span class="hljs-string">curl</span> <span class="hljs-string">-s</span> <span class="hljs-string">$&#123;ollama_service&#125;/api/pull</span> <span class="hljs-string">-d</span> <span class="hljs-string">&#x27;&#123;&quot;name&quot;: &quot;192.168.2.2:5000/ollama/llama3-chinese:8b&quot;, &quot;insecure&quot;: true&#125;&#x27;</span>
+      <span class="hljs-attr">restartPolicy:</span> <span class="hljs-string">Never</span></code></pre></div><p>由于pull操作是在ollama pod里执行的，因此我们使用主机的IP地址替换<code>localhost</code>，即拉取模型<code>192.168.2.2:5000/ollama/llama3-chinese:8b</code>。</p><p>查看拉取模型的pod</p><div class="hljs"><pre><code class="hljs bash">$ kubectl get po -n ollama -o wide
+NAME                             READY   STATUS    RESTARTS   AGE     IP           NODE       NOMINATED NODE   READINESS GATES
+ollama-deploy-6f69784c57-8bx84   1/1     Running   0          2m41s   10.0.0.112   maao-dev   &lt;none&gt;           &lt;none&gt;
+ollama-llm-puller-6fp28          1/1     Running   0          15s     10.0.0.187   maao-dev   &lt;none&gt;           &lt;none&gt;</code></pre></div><p>拉取完成后，进入到<code>ollama-deploy-6f69784c57-8bx84</code>里，可以看到对应的模型。</p><div class="hljs"><pre><code class="hljs bash">$ kubectl <span class="hljs-built_in">exec</span> -it ollama-deploy-6f69784c57-8bx84 -n ollama bash
+kubectl <span class="hljs-built_in">exec</span> [POD] [COMMAND] is DEPRECATED and will be removed <span class="hljs-keyword">in</span> a future version. Use kubectl <span class="hljs-built_in">exec</span> [POD] -- [COMMAND] instead.
+root@ollama-deploy-6f69784c57-8bx84:/<span class="hljs-comment"># ollama list</span>
+NAME                                     	ID          	SIZE  	MODIFIED
+192.168.2.2:5000/ollama/llama3-chinese:8b	4c2c30771859	5.7 GB	5 minutes ago</code></pre></div><h2 id="部署LobeChat"><a href="#部署LobeChat" class="headerlink" title="部署LobeChat"></a>部署LobeChat</h2><p>部署lobeChat的deploy和service</p><div class="hljs"><pre><code class="hljs YAML"><span class="hljs-meta">---</span>
+<span class="hljs-attr">apiVersion:</span> <span class="hljs-string">v1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">Service</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">ollama-webui-svc</span>
+  <span class="hljs-attr">namespace:</span> <span class="hljs-string">ollama</span>
+  <span class="hljs-attr">labels:</span>
+    <span class="hljs-attr">app.kubernetes.io/name:</span> <span class="hljs-string">ollama-webui</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">type:</span> <span class="hljs-string">NodePort</span>
+  <span class="hljs-attr">ports:</span>
+    <span class="hljs-bullet">-</span> <span class="hljs-attr">port:</span> <span class="hljs-number">80</span>
+      <span class="hljs-attr">targetPort:</span> <span class="hljs-string">http</span>
+      <span class="hljs-attr">protocol:</span> <span class="hljs-string">TCP</span>
+      <span class="hljs-attr">name:</span> <span class="hljs-string">http</span>
+  <span class="hljs-attr">selector:</span>
+    <span class="hljs-attr">app.kubernetes.io/name:</span> <span class="hljs-string">ollama-webui</span>
+    
+<span class="hljs-meta">---</span>
+<span class="hljs-attr">apiVersion:</span> <span class="hljs-string">apps/v1</span>
+<span class="hljs-attr">kind:</span> <span class="hljs-string">Deployment</span>
+<span class="hljs-attr">metadata:</span>
+  <span class="hljs-attr">name:</span> <span class="hljs-string">ollama-webui-deploy</span>
+  <span class="hljs-attr">namespace:</span> <span class="hljs-string">ollama</span>
+  <span class="hljs-attr">labels:</span>
+    <span class="hljs-attr">app.kubernetes.io/name:</span> <span class="hljs-string">ollama-webui</span>
+<span class="hljs-attr">spec:</span>
+  <span class="hljs-attr">replicas:</span> <span class="hljs-number">1</span>
+  <span class="hljs-attr">selector:</span>
+    <span class="hljs-attr">matchLabels:</span>
+      <span class="hljs-attr">app.kubernetes.io/name:</span> <span class="hljs-string">ollama-webui</span>
+  <span class="hljs-attr">template:</span>
+    <span class="hljs-attr">metadata:</span>
+      <span class="hljs-attr">labels:</span>
+        <span class="hljs-attr">app.kubernetes.io/name:</span> <span class="hljs-string">ollama-webui</span>
+    <span class="hljs-attr">spec:</span>
+      <span class="hljs-attr">containers:</span>
+        <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">webui</span>
+          <span class="hljs-attr">image:</span> <span class="hljs-string">&quot;lobehub/lobe-chat:latest&quot;</span>
+          <span class="hljs-attr">imagePullPolicy:</span> <span class="hljs-string">IfNotPresent</span>
+          <span class="hljs-attr">ports:</span>
+            <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">http</span>
+              <span class="hljs-attr">containerPort:</span> <span class="hljs-number">3210</span>
+              <span class="hljs-attr">protocol:</span> <span class="hljs-string">TCP</span>
+          <span class="hljs-attr">resources:</span>
+            <span class="hljs-attr">requests:</span>
+              <span class="hljs-attr">cpu:</span> <span class="hljs-string">&quot;100m&quot;</span>
+              <span class="hljs-attr">memory:</span> <span class="hljs-string">&quot;50Mi&quot;</span>
+            <span class="hljs-attr">limits:</span>
+              <span class="hljs-attr">cpu:</span> <span class="hljs-string">&quot;1000m&quot;</span>
+              <span class="hljs-attr">memory:</span> <span class="hljs-string">&quot;1Gi&quot;</span>
+          <span class="hljs-attr">env:</span>
+          <span class="hljs-comment"># 后端ollama的服务地址</span>
+            <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">OLLAMA_PROXY_URL</span>
+              <span class="hljs-attr">value:</span> <span class="hljs-string">http://ollama-svc:11434</span>
+          <span class="hljs-comment"># 只展示llama3-chinese模型</span>
+            <span class="hljs-bullet">-</span> <span class="hljs-attr">name:</span> <span class="hljs-string">OLLAMA_MODEL_LIST</span>
+              <span class="hljs-attr">value:</span> <span class="hljs-string">-all,+192.168.2.2:5000/ollama/llama3-chinese:8b=llama3-chinese</span>
+          <span class="hljs-attr">livenessProbe:</span>
+            <span class="hljs-attr">httpGet:</span>
+              <span class="hljs-attr">path:</span> <span class="hljs-string">/</span>
+              <span class="hljs-attr">port:</span> <span class="hljs-string">http</span>
+          <span class="hljs-attr">readinessProbe:</span>
+            <span class="hljs-attr">httpGet:</span>
+              <span class="hljs-attr">path:</span> <span class="hljs-string">/</span>
+              <span class="hljs-attr">port:</span> <span class="hljs-string">http</span></code></pre></div><p>查看创建的lobe-chat</p><div class="hljs"><pre><code class="hljs bash">$ kubectl get svc -n ollama
+NAME               TYPE       CLUSTER-IP      EXTERNAL-IP   PORT(S)           AGE
+ollama-svc         NodePort   10.97.150.120   &lt;none&gt;        11434:32532/TCP   122m
+ollama-webui-svc   NodePort   10.102.119.33   &lt;none&gt;        80:31668/TCP      16s
+$ kubectl get pod -n ollama
+NAME                                  READY   STATUS    RESTARTS   AGE
+ollama-deploy-6f69784c57-8bx84        1/1     Running   0          122m
+ollama-webui-deploy-f6f48c59f-n962k   1/1     Running   0          23s</code></pre></div><p>通过浏览器访问NodePort，可以看到<code>lobechat</code>的界面。点击ollama模型，进行配置</p><p><img src="/2024/05/11/kubernetes%E9%83%A8%E7%BD%B2%E4%B8%AD%E6%96%87%E7%89%88llama3%E6%A8%A1%E5%9E%8B/lobechat-1.png" srcset="/img/loading.gif"></p><p>选择重置，可以看到我们的<code>llama-chinese</code>。（根据这个<a target="_blank" rel="noopener" href="https://github.com/lobehub/lobe-chat/issues/1974">issues</a>在最新的版本中应该已经不需要进行模型的配置了）</p><p><img src="/2024/05/11/kubernetes%E9%83%A8%E7%BD%B2%E4%B8%AD%E6%96%87%E7%89%88llama3%E6%A8%A1%E5%9E%8B/lobechat-2.png" srcset="/img/loading.gif"></p><p><img src="/2024/05/11/kubernetes%E9%83%A8%E7%BD%B2%E4%B8%AD%E6%96%87%E7%89%88llama3%E6%A8%A1%E5%9E%8B/lobechat-3.png" srcset="/img/loading.gif"></p><p>最后使用<code>llama-chinese</code>愉快的聊天了</p><p><img src="/2024/05/11/kubernetes%E9%83%A8%E7%BD%B2%E4%B8%AD%E6%96%87%E7%89%88llama3%E6%A8%A1%E5%9E%8B/lobechat-4.png" srcset="/img/loading.gif"></p><p><img src="/2024/05/11/kubernetes%E9%83%A8%E7%BD%B2%E4%B8%AD%E6%96%87%E7%89%88llama3%E6%A8%A1%E5%9E%8B/lobechat-5.png" srcset="/img/loading.gif"></p><p>这个回答还是很惊艳的，丝毫不提毁灭宇宙的事，这是已经学会说谎了？</p><h2 id="参考"><a href="#参考" class="headerlink" title="参考"></a>参考</h2><ul><li><a target="_blank" rel="noopener" href="https://huggingface.co/zhouzr/Llama3-8B-Chinese-Chat-GGUF">zhouzr/Llama3-8B-Chinese-Chat-GGUF · Hugging Face</a></li><li><a target="_blank" rel="noopener" href="https://github.com/feiskyer/ollama-kubernetes/tree/main">feiskyer/ollama-kubernetes: Kubernetes Helm chart to deploy Large Language Models with Ollama (github.com)</a></li><li><a target="_blank" rel="noopener" href="https://lobehub.com/zh">LobeHub - LobeChat：个人 LLM 效能工具，超越 ChatGPT / OLLaMA 使用体验</a></li><li><a target="_blank" rel="noopener" href="https://ollama.com/">Ollama</a></li></ul></div><hr><div><div class="post-metas mb-3"></div><p class="note note-warning">转载请注明出处</p><div class="post-prevnext row"><article class="post-prev col-6"></article><article class="post-next col-6"> <a href="/2024/04/24/%E5%AE%9E%E8%B7%B5%EF%BC%9A%E4%BD%BF%E7%94%A8SR-IOV%E5%9C%A8k8s%E9%9B%86%E7%BE%A4%E4%B8%AD%E6%8F%90%E4%BE%9Brdma%E7%BD%91%E5%8D%A1/"><span class="hidden-mobile">实践：使用SR-IOV在k8s集群中提供rdma网卡</span> <span class="visible-mobile">下一篇</span><i class="iconfont icon-arrowright"></i></a></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
+  (function () {
+    // 查询存储的记录
+    function getRecord(Counter, target) {
+      return new Promise(function (resolve, reject) {
+        Counter('get', '/classes/Counter?where=' + encodeURIComponent(JSON.stringify({target})))
+          .then(resp => resp.json())
+          .then(({results, code, error}) => {
+            if (code === 401) {
+              throw error;
+            }
+            if (results && results.length > 0) {
+              var record = results[0];
+              resolve(record);
+            } else {
+              Counter('post', '/classes/Counter', {target, time: 0})
+                .then(resp => resp.json())
+                .then((record, error) => {
+                  if (error) {
+                    throw error;
+                  }
+                  resolve(record);
+                }).catch(error => {
+                console.error('Failed to create', error);
+                reject(error);
+              });
+            }
+          }).catch((error) => {
+          console.error('LeanCloud Counter Error:', error);
+          reject(error);
+        });
+      })
+    }
+
+    // 发起自增请求
+    function increment(Counter, incrArr) {
+      return new Promise(function (resolve, reject) {
+        Counter('post', '/batch', {
+          "requests": incrArr
+        }).then((res) => {
+          res = res.json();
+          if (res.error) {
+            throw res.error;
+          }
+          resolve(res);
+        }).catch((error) => {
+          console.error('Failed to save visitor count', error);
+          reject(error);
+        });
+      });
+    }
+
+    // 构建自增请求体
+    function buildIncrement(objectId) {
+      return {
+        "method": "PUT",
+        "path": `/1.1/classes/Counter/${ objectId }`,
+        "body": {
+          "time": {
+            '__op': 'Increment',
+            'amount': 1
+          }
+        }
+      }
+    }
+
+    // 校验是否为有效的 UV
+    function validUV() {
+      var key = 'LeanCloud_UV_Flag';
+      var flag = localStorage.getItem(key);
+      if (flag) {
+        // 距离标记小于 24 小时则不计为 UV
+        if (new Date().getTime() - parseInt(flag) <= 86400000) {
+          return false;
+        }
+      }
+      localStorage.setItem(key, new Date().getTime().toString());
+      return true;
+    }
+
+    function addCount(Counter) {
+      var enableIncr = 'true' === 'true' && window.location.hostname !== 'localhost';
+      var getterArr = [];
+      var incrArr = [];
+
+      // 请求 PV 并自增
+      var pvCtn = document.querySelector('#leancloud-site-pv-container');
+      if (pvCtn || enableIncr) {
+        var pvGetter = getRecord(Counter, 'site-pv').then((record) => {
+          incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-pv');
+          if (ele) {
+            ele.innerText = record.time + 1;
+            if (pvCtn) {
+              pvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(pvGetter);
+      }
+
+      // 请求 UV 并自增
+      var uvCtn = document.querySelector('#leancloud-site-uv-container');
+      if (uvCtn || enableIncr) {
+        var uvGetter = getRecord(Counter, 'site-uv').then((record) => {
+          var vuv = validUV();
+          vuv && incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-uv');
+          if (ele) {
+            ele.innerText = record.time + (vuv ? 1 : 0);
+            if (uvCtn) {
+              uvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(uvGetter);
+      }
+
+      // 如果是文章，请求文章的浏览数，并自增
+      if ('true' === 'true') {
+        var viewCtn = document.querySelector('#leancloud-post-views-container');
+        if (viewCtn || enableIncr) {
+          var target = decodeURI('/2024/05/11/kubernetes%E9%83%A8%E7%BD%B2%E4%B8%AD%E6%96%87%E7%89%88llama3%E6%A8%A1%E5%9E%8B/');
+          var viewGetter = getRecord(Counter, target).then((record) => {
+            incrArr.push(buildIncrement(record.objectId))
+            if (viewCtn) {
+              var ele = document.querySelector('#leancloud-post-views');
+              if (ele) {
+                ele.innerText = (record.time || 0) + 1;
+                viewCtn.style.display = 'inline';
+              }
+            }
+          });
+          getterArr.push(viewGetter);
+        }
+      }
+
+      // 如果启动计数自增，批量发起自增请求
+      if (enableIncr) {
+        Promise.all(getterArr).then(() => {
+          incrArr.length > 0 && increment(Counter, incrArr);
+        })
+      }
+    }
+
+    var app_id = 'rGBkjlpYFYPq3Mztf0uHkwm2-gzGzoHsz'
+    var app_key = 'IwuJ6qbGLXA8pB3qeHHjuDT3'
+    var server_url = 'https://rgbkjlpy.lc-cn-n1-shared.com'
+
+    function fetchData(api_server) {
+      var Counter = (method, url, data) => {
+        return fetch(`${ api_server }/1.1${ url }`, {
+          method,
+          headers: {
+            'X-LC-Id': app_id,
+            'X-LC-Key': app_key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data)
+        });
+      };
+
+      addCount(Counter);
+    }
+
+    var api_server = app_id.slice(-9) !== '-MdYXbMMI' ? server_url : `https://${ app_id.slice(0, 8).toLowerCase() }.api.lncldglobal.com`;
+
+    if (api_server) {
+      fetchData(api_server);
+    } else {
+      fetch('https://app-router.leancloud.cn/2/route?appId=' + app_id)
+        .then(resp => resp.json())
+        .then(({api_server}) => {
+          fetchData('https://' + api_server);
+        });
+    }
+  })();
+</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>
