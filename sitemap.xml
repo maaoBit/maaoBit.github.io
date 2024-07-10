@@ -144,27 +144,6 @@
 
   
   <url>
-    <loc>https://maao.cloud/tags/Kubernetes/</loc>
-    <lastmod>2024-07-10</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
-    <loc>https://maao.cloud/tags/BPF/</loc>
-    <lastmod>2024-07-10</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
-    <loc>https://maao.cloud/tags/Cilium/</loc>
-    <lastmod>2024-07-10</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
     <loc>https://maao.cloud/tags/Kube-proxy/</loc>
     <lastmod>2024-07-10</lastmod>
     <changefreq>daily</changefreq>
@@ -193,13 +172,6 @@
   </url>
   
   <url>
-    <loc>https://maao.cloud/tags/MetalLB/</loc>
-    <lastmod>2024-07-10</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
     <loc>https://maao.cloud/tags/Controller/</loc>
     <lastmod>2024-07-10</lastmod>
     <changefreq>daily</changefreq>
@@ -207,7 +179,35 @@
   </url>
   
   <url>
+    <loc>https://maao.cloud/tags/MetalLB/</loc>
+    <lastmod>2024-07-10</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
     <loc>https://maao.cloud/tags/Seccomp/</loc>
+    <lastmod>2024-07-10</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maao.cloud/tags/Cilium/</loc>
+    <lastmod>2024-07-10</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maao.cloud/tags/BPF/</loc>
+    <lastmod>2024-07-10</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maao.cloud/tags/Kubernetes/</loc>
     <lastmod>2024-07-10</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
@@ -230,20 +230,6 @@
 
   
   <url>
-    <loc>https://maao.cloud/categories/AI/</loc>
-    <lastmod>2024-07-10</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
-    <loc>https://maao.cloud/categories/Kubernetes/</loc>
-    <lastmod>2024-07-10</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
     <loc>https://maao.cloud/categories/kubernetes/</loc>
     <lastmod>2024-07-10</lastmod>
     <changefreq>daily</changefreq>
@@ -259,6 +245,20 @@
   
   <url>
     <loc>https://maao.cloud/categories/linux/</loc>
+    <lastmod>2024-07-10</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maao.cloud/categories/AI/</loc>
+    <lastmod>2024-07-10</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maao.cloud/categories/Kubernetes/</loc>
     <lastmod>2024-07-10</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
