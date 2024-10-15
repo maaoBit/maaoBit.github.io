@@ -144,27 +144,6 @@
 
   
   <url>
-    <loc>https://maaobit.github.io/tags/Kubernetes/</loc>
-    <lastmod>2024-10-15</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
-    <loc>https://maaobit.github.io/tags/BPF/</loc>
-    <lastmod>2024-10-15</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
-    <loc>https://maaobit.github.io/tags/Cilium/</loc>
-    <lastmod>2024-10-15</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
     <loc>https://maaobit.github.io/tags/Kube-proxy/</loc>
     <lastmod>2024-10-15</lastmod>
     <changefreq>daily</changefreq>
@@ -214,6 +193,27 @@
   </url>
   
   <url>
+    <loc>https://maaobit.github.io/tags/Cilium/</loc>
+    <lastmod>2024-10-15</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maaobit.github.io/tags/BPF/</loc>
+    <lastmod>2024-10-15</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maaobit.github.io/tags/Kubernetes/</loc>
+    <lastmod>2024-10-15</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
     <loc>https://maaobit.github.io/tags/RDMA/</loc>
     <lastmod>2024-10-15</lastmod>
     <changefreq>daily</changefreq>
@@ -228,20 +228,6 @@
   </url>
   
 
-  
-  <url>
-    <loc>https://maaobit.github.io/categories/AI/</loc>
-    <lastmod>2024-10-15</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
-  
-  <url>
-    <loc>https://maaobit.github.io/categories/Kubernetes/</loc>
-    <lastmod>2024-10-15</lastmod>
-    <changefreq>daily</changefreq>
-    <priority>0.6</priority>
-  </url>
   
   <url>
     <loc>https://maaobit.github.io/categories/kubernetes/</loc>
@@ -259,6 +245,20 @@
   
   <url>
     <loc>https://maaobit.github.io/categories/linux/</loc>
+    <lastmod>2024-10-15</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maaobit.github.io/categories/AI/</loc>
+    <lastmod>2024-10-15</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.6</priority>
+  </url>
+  
+  <url>
+    <loc>https://maaobit.github.io/categories/Kubernetes/</loc>
     <lastmod>2024-10-15</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
