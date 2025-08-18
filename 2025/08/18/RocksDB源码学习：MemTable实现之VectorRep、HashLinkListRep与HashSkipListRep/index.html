@@ -1,0 +1,310 @@
+<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>RocksDB源码学习：MemTable实现之VectorRep、HashLinkListRep与HashSkipListRep - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item"><a class="nav-link" href="/about/"><i class="iconfont icon-user-fill"></i> 关于</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">RocksDB源码学习：MemTable实现之VectorRep、HashLinkListRep与HashSkipListRep</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2025-08-18 11:23" pubdate>2025年8月18日 上午</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 2.5k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 31 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">RocksDB源码学习：MemTable实现之VectorRep、HashLinkListRep与HashSkipListRep</h1><div class="markdown-body" id="post-body"><p><code>MemTable</code> 是 RocksDB 中所有写入操作首先进入的内存数据结构。除了默认的 <code>SkipListRep</code> 实现外，RocksDB 还提供了多种为特定工作负载（Workload）优化的 <code>MemTableRep</code>。本文旨在深入探讨三种极具特色的 <code>MemTable</code> 实现：<code>VectorRep</code>、<code>HashSkipListRep</code> 和 <code>HashLinkListRep</code>，分析它们的核心设计、实现细节与性能权衡。</p><a id="more"></a><h2 id="1-VectorRep：为批量写入优化的简洁实现"><a href="#1-VectorRep：为批量写入优化的简洁实现" class="headerlink" title="1. VectorRep：为批量写入优化的简洁实现"></a>1. <code>VectorRep</code>：为批量写入优化的简洁实现</h2><p><code>VectorRep</code> 是一种基于 <code>std::vector</code> 的 <code>MemTableRep</code> 实现。它的设计哲学是牺牲首次读取性能，换取极致的写入速度和内存效率。</p><h3 id="1-1-核心设计思想"><a href="#1-1-核心设计思想" class="headerlink" title="1.1 核心设计思想"></a>1.1 核心设计思想</h3><p><code>VectorRep</code> 的核心数据结构就是一个 <code>std::vector</code>，它存储所有指向键值对内存区域的指针。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// memtable/vectorrep.cc</span>
+
+<span class="hljs-keyword">using</span> Bucket = <span class="hljs-built_in">std</span>::<span class="hljs-built_in">vector</span>&lt;<span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span>*&gt;;
+<span class="hljs-built_in">std</span>::<span class="hljs-built_in">shared_ptr</span>&lt;Bucket&gt; bucket_;</code></pre></div><p>这种设计的关键特性是 **“懒加载排序” (Lazy Sort)**：</p><ul><li><strong>写入</strong>: 插入操作仅是在 <code>std::vector</code> 的末尾进行 <code>push_back</code>，这是一个摊销 O(1) 的操作，速度极快。</li><li><strong>读取</strong>: 在进行任何查找（Seek）或迭代之前，必须对整个 <code>vector</code> 进行一次全量排序。这次排序的开销是 O(N log N)，可能会导致首次读取的延迟显著增高。</li></ul><h3 id="1-2-写入路径与并发优化"><a href="#1-2-写入路径与并发优化" class="headerlink" title="1.2 写入路径与并发优化"></a>1.2 写入路径与并发优化</h3><p><code>VectorRep</code> 提供了两种写入模式以优化不同场景下的性能。</p><p><strong>1. 单线程写入 <code>Insert()</code></strong></p><p>逻辑非常直接：获取写锁，然后向 <code>bucket_</code> 中 <code>push_back</code>。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// memtable/vectorrep.cc</span>
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">VectorRep::Insert</span><span class="hljs-params">(KeyHandle handle)</span> </span>&#123;
+  <span class="hljs-keyword">auto</span>* key = <span class="hljs-keyword">static_cast</span>&lt;<span class="hljs-keyword">char</span>*&gt;(handle);
+  &#123;
+    <span class="hljs-function">WriteLock <span class="hljs-title">l</span><span class="hljs-params">(&amp;rwlock_)</span></span>;
+    assert(!immutable_);
+    bucket_-&gt;push_back(key);
+  &#125;
+  bucket_size_.FetchAddRelaxed(<span class="hljs-number">1</span>);
+&#125;</code></pre></div><p><strong>2. 并发写入 <code>InsertConcurrently()</code> 与 <code>BatchPostProcess()</code></strong></p><p>为了解决高并发写入时的锁竞争问题，<code>VectorRep</code> 采用了一种基于线程本地存储（Thread Local Storage）的无锁优化。</p><ul><li><p><strong><code>InsertConcurrently()</code></strong>: 此函数将写入的 <code>key</code> 存入一个线程独有的 <code>std::vector</code> 中。由于每个线程操作自己的数据，这个过程完全无锁，速度极快。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// memtable/vectorrep.cc</span>
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">VectorRep::InsertConcurrently</span><span class="hljs-params">(KeyHandle handle)</span> </span>&#123;
+  <span class="hljs-keyword">auto</span>* v = <span class="hljs-keyword">static_cast</span>&lt;TlBucket*&gt;(tl_writes_.Get());
+  <span class="hljs-keyword">if</span> (!v) &#123;
+    v = <span class="hljs-keyword">new</span> TlBucket();
+    tl_writes_.Reset(v);
+  &#125;
+  v-&gt;push_back(<span class="hljs-keyword">static_cast</span>&lt;<span class="hljs-keyword">char</span>*&gt;(handle));
+&#125;</code></pre></div></li><li><p> <strong><code>BatchPostProcess()</code></strong>: 在一次 <code>WriteBatch</code> 写入的末尾，RocksDB 会调用此函数。它负责获取写锁，并将当前线程在本地缓存的所有数据一次性地合并到主 <code>bucket_</code> 中。</p></li></ul><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// memtable/vectorrep.cc</span>
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">VectorRep::BatchPostProcess</span><span class="hljs-params">()</span> </span>&#123;
+  <span class="hljs-keyword">auto</span>* v = <span class="hljs-keyword">static_cast</span>&lt;TlBucket*&gt;(tl_writes_.Get());
+  <span class="hljs-keyword">if</span> (v) &#123;
+    &#123;
+      <span class="hljs-function">WriteLock <span class="hljs-title">l</span><span class="hljs-params">(&amp;rwlock_)</span></span>;
+      assert(!immutable_);
+      <span class="hljs-keyword">for</span> (<span class="hljs-keyword">auto</span>&amp; key : *v) &#123;
+        bucket_-&gt;push_back(key);
+      &#125;
+    &#125;
+    bucket_size_.FetchAddRelaxed(v-&gt;size());
+    <span class="hljs-keyword">delete</span> v;
+    tl_writes_.Reset(<span class="hljs-literal">nullptr</span>);
+  &#125;
+&#125;</code></pre></div><p>这种 “N次无锁写入 + 1次批量加锁合并” 的模式，极大地提升了并发写入的吞吐量。</p><h4 id="1-2-1-深入-BatchPostProcess-调用时机"><a href="#1-2-1-深入-BatchPostProcess-调用时机" class="headerlink" title="1.2.1 深入 BatchPostProcess 调用时机"></a>1.2.1 深入 <code>BatchPostProcess</code> 调用时机</h4><p><code>BatchPostProcess</code> 的调用与 <code>WriteBatch</code> 的处理流程紧密相关，其背后是精巧的访问者模式应用。</p><ol><li> <strong>触发</strong>: 当用户调用 <code>db-&gt;Write()</code> 并提交一个 <code>WriteBatch</code> 时，整个流程开始。</li><li> <strong>迭代</strong>: RocksDB 内部会创建一个 <code>MemTableInserter</code>（一个 <code>WriteBatch::Handler</code> 的实现），并用它来迭代 <code>WriteBatch</code> 中的所有条目。</li><li> <strong>并发插入</strong>: 对于 <code>WriteBatch</code> 中的每一个 <code>Put</code> 操作，<code>MemTableInserter</code> 都会调用 <code>MemTable::Add</code>，进而触发 <code>VectorRep::InsertConcurrently</code>，将数据写入线程本地缓存。</li><li> <strong>最终合并</strong>: 在 <code>WriteBatch</code> 中的<strong>所有</strong>条目都被 <code>MemTableInserter</code> 处理完毕后，RocksDB 会在写入流程的最后，调用<strong>一次</strong> <code>BatchPostProcess()</code> 方法。</li></ol><p>这个机制保证了对于一个 <code>WriteBatch</code> 的 N 次写入，仅有一次最终的加锁合并操作，从而将锁竞争降至最低。</p><h3 id="1-3-读取与迭代器机制"><a href="#1-3-读取与迭代器机制" class="headerlink" title="1.3 读取与迭代器机制"></a>1.3 读取与迭代器机制</h3><p><code>VectorRep</code> 的读取逻辑完全服务于其“懒加载排序”的设计。</p><ul><li><p><strong>写时复制 (Copy-on-Write)</strong>: 当为一个<strong>可变 (mutable)</strong> 的 <code>VectorRep</code> 创建迭代器时，为了保证快照一致性（防止在迭代时有新的写入），它会完整地拷贝一份当前的 <code>bucket_</code> 数据供迭代器使用。这是一个 O(N) 的昂贵操作。如果 <code>VectorRep</code> 已被标记为**不可变 (immutable)**，则迭代器可以直接共享原始数据，无需拷贝。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// memtable/vectorrep.cc</span>
+
+<span class="hljs-function">MemTableRep::Iterator* <span class="hljs-title">VectorRep::GetIterator</span><span class="hljs-params">(Arena* arena)</span> </span>&#123;
+  <span class="hljs-comment">// ...</span>
+  <span class="hljs-function">ReadLock <span class="hljs-title">l</span><span class="hljs-params">(&amp;rwlock_)</span></span>;
+  <span class="hljs-keyword">if</span> (immutable_) &#123;
+    <span class="hljs-comment">// ... 直接使用 bucket_</span>
+  &#125; <span class="hljs-keyword">else</span> &#123;
+    <span class="hljs-comment">// 对可变 memtable，创建一份拷贝</span>
+    <span class="hljs-built_in">std</span>::<span class="hljs-built_in">shared_ptr</span>&lt;Bucket&gt; tmp;
+    tmp.reset(<span class="hljs-keyword">new</span> Bucket(*bucket_));  <span class="hljs-comment">// make a copy</span>
+    <span class="hljs-comment">// ... 使用 tmp</span>
+  &#125;
+&#125;</code></pre></div></li><li><p><strong><code>DoSort()</code></strong>: 迭代器的几乎所有操作（如 <code>Valid()</code>, <code>Seek()</code>）都会首先调用 <code>DoSort()</code>。该函数确保数据在被访问前是排序的。值得注意的是，为了保证修改 <code>sorted_</code> 状态位的线程安全，这里需要获取<strong>写锁</strong>。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// memtable/vectorrep.cc</span>
+
+<span class="hljs-keyword">void</span> VectorRep::Iterator::DoSort() <span class="hljs-keyword">const</span> &#123;
+  <span class="hljs-keyword">if</span> (!sorted_ &amp;&amp; vrep_ != <span class="hljs-literal">nullptr</span>) &#123;
+    <span class="hljs-function">WriteLock <span class="hljs-title">l</span><span class="hljs-params">(&amp;vrep_-&gt;rwlock_)</span></span>; <span class="hljs-comment">// 获取写锁以修改状态</span>
+    <span class="hljs-keyword">if</span> (!vrep_-&gt;sorted_) &#123;
+      <span class="hljs-built_in">std</span>::sort(bucket_-&gt;begin(), bucket_-&gt;end(),
+                stl_wrappers::Compare(compare_));
+      cit_ = bucket_-&gt;begin();
+      vrep_-&gt;sorted_ = <span class="hljs-literal">true</span>;
+    &#125;
+    sorted_ = <span class="hljs-literal">true</span>;
+  &#125;
+  <span class="hljs-comment">// ...</span>
+&#125;</code></pre></div></li><li><p><strong><code>SeekForPrev()</code> 的缺失</strong>: <code>VectorRep</code> 的迭代器并未实现 <code>SeekForPrev</code> 功能。这是一个重要的设计权衡。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// memtable/vectorrep.cc</span>
+<span class="hljs-keyword">void</span> VectorRep::Iterator::SeekForPrev(<span class="hljs-keyword">const</span> Slice&amp; <span class="hljs-comment">/*user_key*/</span>,
+                                      <span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span>* <span class="hljs-comment">/*memtable_key*/</span>) &#123;
+  assert(<span class="hljs-literal">false</span>);
+&#125;</code></pre></div><p> 这意味着 <code>VectorRep</code> 不支持高效地“反向查找”（即查找第一个小于或等于目标 Key 的条目）。如果业务场景需要频繁进行此类操作，<code>VectorRep</code> 将不是一个合适的选择。这再次凸显了其为“快速写入、简单正向读取”场景的深度优化。</p></li></ul><h3 id="1-5-小结"><a href="#1-5-小结" class="headerlink" title="1.5 小结"></a>1.5 小结</h3><p><code>VectorRep</code> 是一个特点鲜明的实现。</p><ul><li> <strong>优点</strong>: 写入速度极快、内存占用低、非常适合批量加载（Bulk Loading）场景。</li><li> <strong>缺点</strong>: 首次读取延迟高，对可变 <code>MemTable</code> 的迭代成本高昂，且不支持反向 Seek。</li></ul><hr><h2 id="2-Prefix-Based-Hashing：为前缀查找而生"><a href="#2-Prefix-Based-Hashing：为前缀查找而生" class="headerlink" title="2. Prefix-Based Hashing：为前缀查找而生"></a>2. Prefix-Based Hashing：为前缀查找而生</h2><p><code>HashSkipListRep</code> 和 <code>HashLinkListRep</code> 共享一个核心设计：它们都是基于前缀哈希的 <code>MemTable</code>。它们通过 <code>SliceTransform</code> 组件从用户 Key 中提取一个“前缀”，然后仅对前缀进行哈希，将所有具有相同前缀的 Key 定位到同一个“桶” (Bucket) 中。</p><p>这种设计使得“查找具有相同前缀的所有 Key”这类操作的性能得到极大提升，因为查找范围从整个数据集缩小到了一个桶内。</p><h2 id="3-HashSkipListRep：简单高效的前缀哈希方案"><a href="#3-HashSkipListRep：简单高效的前缀哈希方案" class="headerlink" title="3. HashSkipListRep：简单高效的前缀哈希方案"></a>3. <code>HashSkipListRep</code>：简单高效的前缀哈希方案</h2><p>这是两种前缀哈希实现中较为直接的一种。</p><h3 id="3-1-核心设计思想"><a href="#3-1-核心设计思想" class="headerlink" title="3.1 核心设计思想"></a>3.1 核心设计思想</h3><p><code>HashSkipListRep</code> 的数据结构是一个哈希表（通过指针数组实现），其中每一个桶都是一个完整的 **<code>SkipList</code>**（跳表）。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// memtable/hash_skiplist_rep.cc</span>
+
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">HashSkipListRep</span> :</span> <span class="hljs-keyword">public</span> MemTableRep &#123;
+  <span class="hljs-comment">// ...</span>
+  <span class="hljs-keyword">using</span> Bucket = SkipList&lt;<span class="hljs-keyword">const</span> <span class="hljs-keyword">char</span>*, <span class="hljs-keyword">const</span> MemTableRep::KeyComparator&amp;&gt;;
+  <span class="hljs-built_in">std</span>::atomic&lt;Bucket*&gt;* buckets_;
+  <span class="hljs-comment">// ...</span>
+&#125;;</code></pre></div><h3 id="3-2-实现解析"><a href="#3-2-实现解析" class="headerlink" title="3.2 实现解析"></a>3.2 实现解析</h3><ul><li><p><strong>懒加载</strong>: 哈希表中的桶（<code>SkipList</code>实例）并不会在 <code>MemTable</code> 创建时就全部分配好。只有当一个 Key 首次落入某个桶时，对应的 <code>SkipList</code> 才会被创建。这在哈希空间利用率较低时能有效节省内存。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// memtable/hash_skiplist_rep.cc</span>
+
+<span class="hljs-function">HashSkipListRep::Bucket* <span class="hljs-title">HashSkipListRep::GetInitializedBucket</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">    <span class="hljs-keyword">const</span> Slice&amp; transformed)</span> </span>&#123;
+  <span class="hljs-keyword">size_t</span> hash = GetHash(transformed);
+  <span class="hljs-keyword">auto</span> bucket = GetBucket(hash);
+  <span class="hljs-keyword">if</span> (bucket == <span class="hljs-literal">nullptr</span>) &#123; <span class="hljs-comment">// 如果桶不存在</span>
+    <span class="hljs-keyword">auto</span> addr = allocator_-&gt;AllocateAligned(<span class="hljs-keyword">sizeof</span>(Bucket));
+    <span class="hljs-comment">// 创建一个新的 SkipList 实例</span>
+    bucket = <span class="hljs-keyword">new</span> (addr) Bucket(compare_, allocator_, skiplist_height_,
+                               skiplist_branching_factor_);
+    buckets_[hash].store(bucket, <span class="hljs-built_in">std</span>::memory_order_release);
+  &#125;
+  <span class="hljs-keyword">return</span> bucket;
+&#125;</code></pre></div></li><li><p> <strong>读写路径</strong>: 所有操作（<code>Insert</code>, <code>Get</code>, <code>Contains</code>）都遵循“提取前缀 -&gt; 哈希定位 -&gt; 在桶内 <code>SkipList</code> 中操作”的路径。桶内的操作就是标准的跳表操作，性能稳定在 O(log N)。</p></li></ul><h3 id="3-3-小结"><a href="#3-3-小结" class="headerlink" title="3.3 小结"></a>3.3 小结</h3><p><code>HashSkipListRep</code> 的设计简单明了，性能可预测。它适用于大部分前缀下的 Key 数量都较多的场景。其主要缺点是在稀疏前缀场景下（大量桶只有一个或零个元素），为每个桶都维护一个 <code>SkipList</code> 结构会带来一定的内存开销。</p><hr><h2 id="4-HashLinkListRep：精巧的自适应哈希方案"><a href="#4-HashLinkListRep：精巧的自适应哈希方案" class="headerlink" title="4. HashLinkListRep：精巧的自适应哈希方案"></a>4. <code>HashLinkListRep</code>：精巧的自适应哈希方案</h2><p><code>HashLinkListRep</code> 是对 <code>HashSkipListRep</code> 的一种极致优化，其核心在于桶内数据结构的<strong>自适应性</strong>。</p><h3 id="4-1-核心设计思想"><a href="#4-1-核心设计思想" class="headerlink" title="4.1 核心设计思想"></a>4.1 核心设计思想</h3><p><code>HashLinkListRep</code> 的桶会根据其中元素的数量动态地改变其自身结构，以在内存占用和查询性能之间达到最佳平衡。</p><h3 id="4-2-桶的四种形态与状态转换"><a href="#4-2-桶的四种形态与状态转换" class="headerlink" title="4.2 桶的四种形态与状态转换"></a>4.2 桶的四种形态与状态转换</h3><p>一个桶的生命周期会经历以下几种形态：</p><ol><li> <strong>空桶</strong>: 初始状态，指针为 <code>nullptr</code>。</li><li> <strong>单个节点</strong>: 当第一个 Key 落入时，桶指针直接指向该 <code>Node</code>。此设计旨在为稀疏桶节省头节点开销。</li><li> <strong>有序链表</strong>: 当第二个 Key 落入时，桶会“升级”为一个由 <code>BucketHeader</code> 管理的有序链表。此时插入和查找是 O(N) 的。</li><li> <strong>跳表</strong>: 当链表长度超过预设阈值 <code>threshold_use_skiplist</code> 时，<code>HashLinkListRep</code> 会认为该桶已成为热点。它会将**整条链表一次性地转换成一个全新的 <code>SkipList</code>**，以保证后续的查找性能为 O(log N)。</li></ol><p><code>Insert</code> 函数中的逻辑清晰地展示了这种状态机：</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// memtable/hash_linklist_rep.cc</span>
+
+
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">HashLinkListRep::Insert</span><span class="hljs-params">(KeyHandle handle)</span> </span>&#123;
+  <span class="hljs-comment">// ...</span>
+  <span class="hljs-keyword">if</span> (first_next_pointer == <span class="hljs-literal">nullptr</span>) &#123;
+    <span class="hljs-comment">// Case 1. empty bucket -&gt; Case 2. single entry</span>
+  &#125;
+
+  BucketHeader* header = <span class="hljs-literal">nullptr</span>;
+  <span class="hljs-keyword">if</span> (first_next_pointer-&gt;load(<span class="hljs-built_in">std</span>::memory_order_relaxed) == <span class="hljs-literal">nullptr</span>) &#123;
+    <span class="hljs-comment">// Case 2. single entry -&gt; Case 3. linked list</span>
+    <span class="hljs-comment">// ... 创建 BucketHeader ...</span>
+  &#125; <span class="hljs-keyword">else</span> &#123;
+    header = <span class="hljs-keyword">reinterpret_cast</span>&lt;BucketHeader*&gt;(first_next_pointer);
+    <span class="hljs-keyword">if</span> (header-&gt;IsSkipListBucket()) &#123;
+      <span class="hljs-comment">// Case 4. Bucket is already a skip list</span>
+      <span class="hljs-comment">// ... 直接插入 SkipList ...</span>
+      <span class="hljs-keyword">return</span>;
+    &#125;
+  &#125;
+
+  <span class="hljs-keyword">if</span> (header-&gt;GetNumEntries() == threshold_use_skiplist_) &#123;
+    <span class="hljs-comment">// Case 3. linked list -&gt; Case 4. skip list</span>
+    <span class="hljs-comment">// ... 将链表所有元素插入到新创建的 SkipList 中 ...</span>
+  &#125; <span class="hljs-keyword">else</span> &#123;
+    <span class="hljs-comment">// Case 5. 插入到已有的有序链表中</span>
+    <span class="hljs-comment">// ...</span>
+  &#125;
+&#125;</code></pre></div><h3 id="4-3-小结"><a href="#4-3-小结" class="headerlink" title="4.3 小结"></a>4.3 小结</h3><p><code>HashLinkListRep</code> 是一个非常精巧的设计。</p><ul><li> <strong>优点</strong>: 在大量前缀桶内元素稀少时，内存效率极高。</li><li> <strong>缺点</strong>: 实现非常复杂，且在链表向跳表转换的瞬间，单次插入的延迟会较高，可能造成性能抖动。</li></ul><hr><h2 id="5-对比与总结"><a href="#5-对比与总结" class="headerlink" title="5. 对比与总结"></a>5. 对比与总结</h2><table><thead><tr><th align="left">特性</th><th align="left"><code>VectorRep</code></th><th align="left"><code>HashSkipListRep</code></th><th align="left"><code>HashLinkListRep</code></th></tr></thead><tbody><tr><td align="left"><strong>核心结构</strong></td><td align="left"><code>std::vector</code></td><td align="left">哈希表 + 跳表</td><td align="left">哈希表 + (节点/链表/跳表)</td></tr><tr><td align="left"><strong>数据有序性</strong></td><td align="left">全局懒排序</td><td align="left">桶内有序</td><td align="left">桶内有序</td></tr><tr><td align="left"><strong>写入性能</strong></td><td align="left">极快 (摊销 O(1))</td><td align="left">稳定 (O(log N))</td><td align="left">有波动 (O(N) 或 O(log N)，含转换开销)</td></tr><tr><td align="left"><strong>读取性能</strong></td><td align="left">首次慢 (O(N log N))</td><td align="left">稳定 (O(log N))</td><td align="left">有波动 (O(N) 或 O(log N))</td></tr><tr><td align="left"><strong>内存占用</strong></td><td align="left">低</td><td align="left">中等</td><td align="left"><strong>最低</strong> (在稀疏场景下)</td></tr><tr><td align="left"><strong>适用场景</strong></td><td align="left">批量加载，写多读少</td><td align="left">通用的前缀查找</td><td align="left">稀疏的前缀查找，内存敏感</td></tr></tbody></table></div><hr><div><div class="post-metas mb-3"><div class="post-meta mr-3"><i class="iconfont icon-category"></i> <a class="hover-with-bg" href="/categories/KV%E6%95%B0%E6%8D%AE%E5%BA%93/">KV数据库</a></div><div class="post-meta"><i class="iconfont icon-tags"></i> <a class="hover-with-bg" href="/tags/KV%E6%95%B0%E6%8D%AE%E5%BA%93/">KV数据库</a> <a class="hover-with-bg" href="/tags/RocksDB/">RocksDB</a></div></div><p class="note note-warning">转载请注明出处</p><div class="post-prevnext row"><article class="post-prev col-6"></article><article class="post-next col-6"> <a href="/2025/08/15/RocksDB%E6%BA%90%E7%A0%81%E5%AD%A6%E4%B9%A0%EF%BC%9AMemTable%E5%AE%9E%E7%8E%B0%E4%B9%8BSkipList/"><span class="hidden-mobile">RocksDB源码学习：MemTable实现之SkipList</span> <span class="visible-mobile">下一篇</span><i class="iconfont icon-arrowright"></i></a></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
+  (function () {
+    // 查询存储的记录
+    function getRecord(Counter, target) {
+      return new Promise(function (resolve, reject) {
+        Counter('get', '/classes/Counter?where=' + encodeURIComponent(JSON.stringify({target})))
+          .then(resp => resp.json())
+          .then(({results, code, error}) => {
+            if (code === 401) {
+              throw error;
+            }
+            if (results && results.length > 0) {
+              var record = results[0];
+              resolve(record);
+            } else {
+              Counter('post', '/classes/Counter', {target, time: 0})
+                .then(resp => resp.json())
+                .then((record, error) => {
+                  if (error) {
+                    throw error;
+                  }
+                  resolve(record);
+                }).catch(error => {
+                console.error('Failed to create', error);
+                reject(error);
+              });
+            }
+          }).catch((error) => {
+          console.error('LeanCloud Counter Error:', error);
+          reject(error);
+        });
+      })
+    }
+
+    // 发起自增请求
+    function increment(Counter, incrArr) {
+      return new Promise(function (resolve, reject) {
+        Counter('post', '/batch', {
+          "requests": incrArr
+        }).then((res) => {
+          res = res.json();
+          if (res.error) {
+            throw res.error;
+          }
+          resolve(res);
+        }).catch((error) => {
+          console.error('Failed to save visitor count', error);
+          reject(error);
+        });
+      });
+    }
+
+    // 构建自增请求体
+    function buildIncrement(objectId) {
+      return {
+        "method": "PUT",
+        "path": `/1.1/classes/Counter/${ objectId }`,
+        "body": {
+          "time": {
+            '__op': 'Increment',
+            'amount': 1
+          }
+        }
+      }
+    }
+
+    // 校验是否为有效的 UV
+    function validUV() {
+      var key = 'LeanCloud_UV_Flag';
+      var flag = localStorage.getItem(key);
+      if (flag) {
+        // 距离标记小于 24 小时则不计为 UV
+        if (new Date().getTime() - parseInt(flag) <= 86400000) {
+          return false;
+        }
+      }
+      localStorage.setItem(key, new Date().getTime().toString());
+      return true;
+    }
+
+    function addCount(Counter) {
+      var enableIncr = 'true' === 'true' && window.location.hostname !== 'localhost';
+      var getterArr = [];
+      var incrArr = [];
+
+      // 请求 PV 并自增
+      var pvCtn = document.querySelector('#leancloud-site-pv-container');
+      if (pvCtn || enableIncr) {
+        var pvGetter = getRecord(Counter, 'site-pv').then((record) => {
+          incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-pv');
+          if (ele) {
+            ele.innerText = record.time + 1;
+            if (pvCtn) {
+              pvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(pvGetter);
+      }
+
+      // 请求 UV 并自增
+      var uvCtn = document.querySelector('#leancloud-site-uv-container');
+      if (uvCtn || enableIncr) {
+        var uvGetter = getRecord(Counter, 'site-uv').then((record) => {
+          var vuv = validUV();
+          vuv && incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-uv');
+          if (ele) {
+            ele.innerText = record.time + (vuv ? 1 : 0);
+            if (uvCtn) {
+              uvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(uvGetter);
+      }
+
+      // 如果是文章，请求文章的浏览数，并自增
+      if ('true' === 'true') {
+        var viewCtn = document.querySelector('#leancloud-post-views-container');
+        if (viewCtn || enableIncr) {
+          var target = decodeURI('/2025/08/18/RocksDB%E6%BA%90%E7%A0%81%E5%AD%A6%E4%B9%A0%EF%BC%9AMemTable%E5%AE%9E%E7%8E%B0%E4%B9%8BVectorRep%E3%80%81HashLinkListRep%E4%B8%8EHashSkipListRep/');
+          var viewGetter = getRecord(Counter, target).then((record) => {
+            incrArr.push(buildIncrement(record.objectId))
+            if (viewCtn) {
+              var ele = document.querySelector('#leancloud-post-views');
+              if (ele) {
+                ele.innerText = (record.time || 0) + 1;
+                viewCtn.style.display = 'inline';
+              }
+            }
+          });
+          getterArr.push(viewGetter);
+        }
+      }
+
+      // 如果启动计数自增，批量发起自增请求
+      if (enableIncr) {
+        Promise.all(getterArr).then(() => {
+          incrArr.length > 0 && increment(Counter, incrArr);
+        })
+      }
+    }
+
+    var app_id = 'rGBkjlpYFYPq3Mztf0uHkwm2-gzGzoHsz'
+    var app_key = 'IwuJ6qbGLXA8pB3qeHHjuDT3'
+    var server_url = 'https://rgbkjlpy.lc-cn-n1-shared.com'
+
+    function fetchData(api_server) {
+      var Counter = (method, url, data) => {
+        return fetch(`${ api_server }/1.1${ url }`, {
+          method,
+          headers: {
+            'X-LC-Id': app_id,
+            'X-LC-Key': app_key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data)
+        });
+      };
+
+      addCount(Counter);
+    }
+
+    var api_server = app_id.slice(-9) !== '-MdYXbMMI' ? server_url : `https://${ app_id.slice(0, 8).toLowerCase() }.api.lncldglobal.com`;
+
+    if (api_server) {
+      fetchData(api_server);
+    } else {
+      fetch('https://app-router.leancloud.cn/2/route?appId=' + app_id)
+        .then(resp => resp.json())
+        .then(({api_server}) => {
+          fetchData('https://' + api_server);
+        });
+    }
+  })();
+</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>
