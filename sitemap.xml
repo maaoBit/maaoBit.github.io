@@ -2,6 +2,13 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   
   <url>
+    <loc>https://maaobit.github.io/2025/08/20/RocksDB%E6%BA%90%E7%A0%81%E5%AD%A6%E4%B9%A0-%E6%B7%B1%E5%85%A5BlockBasedTable-%E4%B8%80/</loc>
+    
+    <lastmod>2025-08-20</lastmod>
+    
+  </url>
+  
+  <url>
     <loc>https://maaobit.github.io/2025/08/19/RocksDB%E4%B8%ADCuckoo-Table%E6%8A%80%E6%9C%AF%E5%86%85%E5%B9%95%E8%A7%A3%E6%9E%90/</loc>
     
     <lastmod>2025-08-19</lastmod>
@@ -158,7 +165,7 @@
 
   <url>
     <loc>https://maaobit.github.io/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
   </url>
@@ -166,98 +173,98 @@
   
   <url>
     <loc>https://maaobit.github.io/tags/Kubernetes/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/tags/BPF/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/tags/Cilium/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/tags/Kube-proxy/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/tags/IPVS/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/tags/Calico/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/tags/BGP/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/tags/MetalLB/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/tags/Controller/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/tags/Seccomp/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/tags/RDMA/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/tags/AI/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/tags/KV%E6%95%B0%E6%8D%AE%E5%BA%93/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/tags/RocksDB/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
@@ -266,56 +273,56 @@
   
   <url>
     <loc>https://maaobit.github.io/categories/AI/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/categories/Kubernetes/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/categories/kubernetes/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/categories/calico/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/categories/linux/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/categories/AI/Kubernetes/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/categories/Kubernetes/AI/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
   
   <url>
     <loc>https://maaobit.github.io/categories/KV%E6%95%B0%E6%8D%AE%E5%BA%93/</loc>
-    <lastmod>2025-08-19</lastmod>
+    <lastmod>2025-08-20</lastmod>
     <changefreq>daily</changefreq>
     <priority>0.6</priority>
   </url>
