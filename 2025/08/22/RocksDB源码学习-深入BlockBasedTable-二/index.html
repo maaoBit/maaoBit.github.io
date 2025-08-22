@@ -1,0 +1,375 @@
+<!DOCTYPE html><html lang="zh-CN" data-default-color-scheme="&#34;auto&#34;"><head><meta charset="UTF-8"><link rel="apple-touch-icon" sizes="76x76" href="/img/favicon.png"><link rel="icon" type="image/png" href="/img/favicon.png"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,shrink-to-fit=no"><meta http-equiv="x-ua-compatible" content="ie=edge"><meta name="theme-color" content="#2f4154"><meta name="description" content=""><meta name="author" content="maao"><meta name="keywords" content=""><title>RocksDB源码学习:深入BlockBasedTable(二) - MAAO的博客</title><link rel="stylesheet" href="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/css/bootstrap.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/github-markdown-css/4.0.0/github-markdown.min.css"><link rel="stylesheet" href="/lib/hint/hint.min.css"><link rel="stylesheet" href="https://cdn.staticfile.org/highlight.js/10.0.0/styles/darcula.min.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1749284_pf9vaxs7x7b.css"><link rel="stylesheet" href="//at.alicdn.com/t/font_1736178_kmeydafke9r.css"><link rel="stylesheet" href="/css/main.css"><script src="/js/utils.js"></script><script src="/js/color-schema.js"></script><meta name="generator" content="Hexo 5.1.1"></head><body><header style="height:70vh"><nav id="navbar" class="navbar fixed-top navbar-expand-lg navbar-dark scrolling-navbar"><div class="container"> <a class="navbar-brand" href="/">&nbsp;<strong>maao's space</strong>&nbsp;</a> <button id="navbar-toggler-btn" class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation"><div class="animated-icon"><span></span><span></span><span></span></div></button><div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav ml-auto text-center"><li class="nav-item"><a class="nav-link" href="/"><i class="iconfont icon-home-fill"></i> 首页</a></li><li class="nav-item"><a class="nav-link" href="/archives/"><i class="iconfont icon-archive-fill"></i> 归档</a></li><li class="nav-item"><a class="nav-link" href="/categories/"><i class="iconfont icon-category-fill"></i> 分类</a></li><li class="nav-item"><a class="nav-link" href="/tags/"><i class="iconfont icon-tags-fill"></i> 标签</a></li><li class="nav-item"><a class="nav-link" href="/about/"><i class="iconfont icon-user-fill"></i> 关于</a></li><li class="nav-item" id="search-btn"> <a class="nav-link" data-toggle="modal" data-target="#modalSearch">&nbsp;<i class="iconfont icon-search"></i>&nbsp;</a></li><li class="nav-item" id="color-toggle-btn"> <a class="nav-link" href="javascript:">&nbsp;<i class="iconfont icon-dark" id="color-toggle-icon"></i>&nbsp;</a></li></ul></div></div></nav><div class="banner intro-2" id="background" parallax="true" style="background:url(/img/default.jpg) no-repeat center center;background-size:cover"><div class="full-bg-img"><div class="mask flex-center" style="background-color:rgba(0,0,0,.3)"><div class="container page-header text-center fade-in-up"> <span class="h2" id="subtitle">RocksDB源码学习:深入BlockBasedTable(二)</span><div class="mt-3"><span class="post-meta"><i class="iconfont icon-date-fill" aria-hidden="true"></i> <time datetime="2025-08-22 11:18" pubdate>2025年8月22日 上午</time></span></div><div class="mt-1"><span class="post-meta mr-2"><i class="iconfont icon-chart"></i> 6k 字</span><span class="post-meta mr-2"><i class="iconfont icon-clock-fill"></i> 71 分钟</span><span id="leancloud-post-views-container" class="post-meta" style="display:none"><i class="iconfont icon-eye" aria-hidden="true"></i><span id="leancloud-post-views"></span> 次</span></div></div></div></div></div></header><main><div class="container-fluid"><div class="row"><div class="d-none d-lg-block col-lg-2"></div><div class="col-lg-8 nopadding-md"><div class="container nopadding-md" id="board-ctn"><div class="py-5" id="board"><article class="post-content mx-auto" id="post"><h1 style="display:none">RocksDB源码学习:深入BlockBasedTable(二)</h1><div class="markdown-body" id="post-body"><p>BlockBasedTable是RocksDB中SST文件的默认格式，本文是源码学习BlockBasedTable的第二篇，主要围绕数据块（Data Block）层面，进行介绍。</p><a id="more"></a><h2 id="一、SST文件格式回顾"><a href="#一、SST文件格式回顾" class="headerlink" title="一、SST文件格式回顾"></a>一、SST文件格式回顾</h2><p>在第一篇里我们已经介绍过BlockBasedTable SST文件的格式，这里再回顾下：</p><p>一个 SST 文件从头到尾依次包含以下部分：</p><ol><li> <strong>[Data Blocks]</strong>: 一系列连续的数据块。这是文件的主体，存储了实际的键值对。</li><li><strong>[Meta Blocks]</strong>: 一系列元数据块，包括：<ul><li> <strong>Filter Block</strong>: 用于快速判断某个 Key 是否 <em>可能</em> 不在文件中的过滤器（如布隆过滤器）。</li><li> <strong>Properties Block</strong>: 存储文件的元信息，如比较器名称、前缀提取器名称、创建时间、总条目数等。</li><li> <strong>Range Deletion Block</strong>: 存储范围删除的墓碑标记。</li><li> <strong>Compression Dictionary Block</strong>: 用于ZSTD压缩的字典，可以显著提高压缩率。</li></ul></li><li> <strong>[Metaindex Block]</strong>: 元数据索引块。它的 “key” 是元数据块的名称（例如 <code>&quot;filter.rocksdb.BuiltinBloomFilter2&quot;</code>），”value” 是一个 <code>BlockHandle</code>，指向该元数据块在文件中的位置。</li><li> <strong>[Index Block]</strong>: 数据块的索引。它的 “key” 是某个数据块的 <code>separator</code> (通常是 &gt;= 该数据块的最大key，且 &lt; 下一个数据块的最小key)，”value” 是一个 <code>BlockHandle</code>，指向该数据块的位置。</li><li> <strong>[Footer]</strong>: 文件尾部。它是一个固定长度的结构，包含了指向 <code>Metaindex Block</code> 和 <code>Index Block</code> 的 <code>BlockHandle</code>，以及用于校验文件类型的 <code>Magic Number</code>。</li></ol><p><code>Footer</code> 是整个文件的入口点。任何读取操作都始于解析 <code>Footer</code>，然后按图索骥，找到索引，最终定位到数据。</p><hr><h1 id="二、BlockBasedTable的读写"><a href="#二、BlockBasedTable的读写" class="headerlink" title="二、BlockBasedTable的读写"></a>二、BlockBasedTable的读写</h1><h2 id="2-1-写路径：BlockBasedTableBuilder-的构建之旅"><a href="#2-1-写路径：BlockBasedTableBuilder-的构建之旅" class="headerlink" title="2.1 写路径：BlockBasedTableBuilder 的构建之旅"></a>2.1 写路径：<code>BlockBasedTableBuilder</code> 的构建之旅</h2><p><code>BlockBasedTableBuilder</code> 的核心职责就是接收用户传入的、<strong>已排序</strong>的键值对，将它们打包成数据块，并生成上述的所有元数据块和索引，最后将它们有序地写入文件。</p><h3 id="2-1-1-Add-键值对的添加与数据块切分"><a href="#2-1-1-Add-键值对的添加与数据块切分" class="headerlink" title="2.1.1 Add(): 键值对的添加与数据块切分"></a>2.1.1 <code>Add()</code>: 键值对的添加与数据块切分</h3><p><code>Add()</code> 是构建过程的起点。每当一个键值对被添加时，<code>Builder</code> 会将其交给内部的 <code>data_block</code>（一个 <code>BlockBuilder</code> 实例）。同时，它会通过一个 <code>FlushBlockPolicy</code> 来判断当前的数据块是否已经“满”了。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// table/block_based/block_based_table_builder.cc</span>
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">BlockBasedTableBuilder::Add</span><span class="hljs-params">(<span class="hljs-keyword">const</span> Slice&amp; ikey, <span class="hljs-keyword">const</span> Slice&amp; value)</span> </span>&#123;
+  Rep* r = rep_;
+  <span class="hljs-comment">// ...</span>
+  <span class="hljs-comment">// 1. FlushBlockPolicy 决定是否应该切分（Flush）当前数据块</span>
+  <span class="hljs-keyword">auto</span> should_flush = r-&gt;flush_block_policy-&gt;Update(ikey, value);
+  <span class="hljs-keyword">if</span> (should_flush) &#123;
+    <span class="hljs-comment">// 2. 将当前key作为下一个数据块的第一个key，用于生成上一个块的索引分隔符</span>
+    r-&gt;first_key_in_next_block = &amp;ikey;
+    Flush(); <span class="hljs-comment">// 切分并写入块</span>
+
+    <span class="hljs-comment">// 3. 为刚刚写入的块，在索引中添加条目</span>
+    <span class="hljs-keyword">if</span> (ok() &amp;&amp; r-&gt;state == Rep::State::kUnbuffered) &#123;
+        <span class="hljs-comment">// 使用上一个块的最后一个key (r-&gt;last_ikey) 和下一个块的第一个key (ikey)</span>
+        <span class="hljs-comment">// 来生成一个短的 separator，并添加到 index_builder</span>
+        r-&gt;index_builder-&gt;AddIndexEntry(r-&gt;last_ikey, &amp;ikey,
+                                        r-&gt;pending_handle,
+                                        &amp;r-&gt;index_separator_scratch);
+    &#125;
+  &#125;
+
+  <span class="hljs-comment">// 4. 将键值对添加到当前的数据块中</span>
+  r-&gt;data_block.AddWithLastKey(ikey, value, r-&gt;last_ikey);
+  r-&gt;last_ikey.assign(ikey.data(), ikey.size());
+  <span class="hljs-comment">// ...</span>
+&#125;</code></pre></div><p><code>Add()</code> 的逻辑非常清晰：它使用 <code>FlushBlockPolicy</code> (默认基于块大小) 来决策何时一个数据块写满了。如果写满，就调用 <code>Flush()</code> 来持久化这个块，并为这个刚写完的块在 <code>index_builder</code> 中添加一个索引条目。最后，将新的键值对添加到当前（可能是新的）数据块中。</p><h3 id="2-1-2-Flush-与-WriteBlock-数据块的持久化"><a href="#2-1-2-Flush-与-WriteBlock-数据块的持久化" class="headerlink" title="2.1.2 Flush() 与 WriteBlock(): 数据块的持久化"></a>2.1.2 <code>Flush()</code> 与 <code>WriteBlock()</code>: 数据块的持久化</h3><p>当 <code>Add()</code> 决定切分一个块时，<code>Flush()</code> 方法被调用。它负责压缩（如果配置了）、打包并写入这个块。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// table/block_based/block_based_table_builder.cc</span>
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">BlockBasedTableBuilder::Flush</span><span class="hljs-params">()</span> </span>&#123;
+  Rep* r = rep_;
+  <span class="hljs-keyword">if</span> (r-&gt;data_block.empty()) &#123;
+    <span class="hljs-keyword">return</span>;
+  &#125;
+  <span class="hljs-comment">// 1. 从 BlockBuilder 获取序列化后的、未压缩的块内容</span>
+  Slice uncompressed_block_data = r-&gt;data_block.Finish();
+  <span class="hljs-comment">// ...</span>
+  <span class="hljs-comment">// 2. 单线程模式下，直接调用 WriteBlock</span>
+  WriteBlock(uncompressed_block_data, &amp;r-&gt;pending_handle, BlockType::kData);
+  r-&gt;data_block.Reset(); <span class="hljs-comment">// 重置 data_block 以便接收新的键值对</span>
+&#125;
+
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">BlockBasedTableBuilder::WriteMaybeCompressedBlock</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">    <span class="hljs-keyword">const</span> Slice&amp; block_contents, CompressionType comp_type, BlockHandle* handle,</span></span>
+<span class="hljs-function"><span class="hljs-params">    BlockType block_type, <span class="hljs-keyword">const</span> Slice* uncompressed_block_data)</span> </span>&#123;
+  <span class="hljs-comment">// 文件格式包含一系列块，每个块都有:</span>
+  <span class="hljs-comment">//    block_data: uint8[n]</span>
+  <span class="hljs-comment">//    compression_type: uint8</span>
+  <span class="hljs-comment">//    checksum: uint32</span>
+  Rep* r = rep_;
+  <span class="hljs-keyword">const</span> <span class="hljs-keyword">uint64_t</span> offset = r-&gt;get_offset();
+  handle-&gt;set_offset(offset); <span class="hljs-comment">// 记录块的起始偏移</span>
+  handle-&gt;set_size(block_contents.size()); <span class="hljs-comment">// 记录块的大小</span>
+
+  <span class="hljs-comment">// 1. 写入块内容</span>
+  r-&gt;file-&gt;Append(io_options, block_contents);
+
+  <span class="hljs-comment">// 2. 写入块的 trailer (1字节压缩类型 + 4字节CRC32C校验和)</span>
+  <span class="hljs-built_in">std</span>::<span class="hljs-built_in">array</span>&lt;<span class="hljs-keyword">char</span>, kBlockTrailerSize&gt; trailer;
+  trailer[<span class="hljs-number">0</span>] = comp_type;
+  <span class="hljs-keyword">uint32_t</span> checksum = ComputeBuiltinChecksumWithLastByte(...);
+  EncodeFixed32(trailer.data() + <span class="hljs-number">1</span>, checksum);
+  r-&gt;file-&gt;Append(io_options, Slice(trailer.data(), trailer.size()));
+
+  <span class="hljs-comment">// 3. 更新文件总偏移</span>
+  r-&gt;set_offset(r-&gt;get_offset() + block_contents.size() + kBlockTrailerSize);
+&#125;</code></pre></div><p><code>Flush()</code> 的流程很简单，它调用 <code>data_block.Finish()</code> 来获取当前块的完整内容，然后调用 <code>WriteBlock</code>。<code>WriteBlock</code> 负责压缩，并最终调用 <code>WriteMaybeCompressedBlock</code>。后者在写入块数据前，会先将当前的文件偏移量和块大小记录在 <code>BlockHandle</code> 中，这个 <code>handle</code> 就是未来索引块中指向这个数据块的“指针”。然后它写入块数据，并在块末尾追加5字节的 <code>trailer</code>（包含压缩类型和CRC校验和）。</p><h3 id="2-1-3-Finish-元数据写入与文件封存"><a href="#2-1-3-Finish-元数据写入与文件封存" class="headerlink" title="2.1.3 Finish(): 元数据写入与文件封存"></a>2.1.3 <code>Finish()</code>: 元数据写入与文件封存</h3><p>当所有键值对都添加完毕后，调用 <code>Finish()</code> 来完成整个SST文件的构建。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// table/block_based/block_based_table_builder.cc</span>
+<span class="hljs-function">Status <span class="hljs-title">BlockBasedTableBuilder::Finish</span><span class="hljs-params">()</span> </span>&#123;
+  Rep* r = rep_;
+  <span class="hljs-comment">// 1. Flush 最后一个未满的数据块</span>
+  Flush();
+
+  BlockHandle filter_block_handle, meta_index_block_handle, index_block_handle;
+  MetaIndexBuilder meta_index_builder;
+
+  <span class="hljs-comment">// 2. 写入各种元数据块 (Filter, Properties, etc.)</span>
+  <span class="hljs-keyword">if</span> (ok()) &#123; WriteFilterBlock(&amp;meta_index_builder); &#125;
+  <span class="hljs-keyword">if</span> (ok()) &#123; WritePropertiesBlock(&amp;meta_index_builder); &#125;
+  
+  <span class="hljs-comment">// 3. 写入索引块</span>
+  <span class="hljs-keyword">if</span> (ok()) &#123; WriteIndexBlock(&amp;meta_index_builder, &amp;index_block_handle); &#125;
+
+  <span class="hljs-comment">// 4. 写入元数据索引块</span>
+  <span class="hljs-keyword">if</span> (ok()) &#123;
+    WriteBlock(meta_index_builder.Finish(), &amp;meta_index_block_handle,
+               BlockType::kMetaIndex);
+  &#125;
+
+  <span class="hljs-comment">// 5. 写入文件尾部 Footer</span>
+  <span class="hljs-keyword">if</span> (ok()) &#123; WriteFooter(meta_index_block_handle, index_block_handle); &#125;
+  
+  <span class="hljs-keyword">return</span> r-&gt;GetStatus();
+&#125;</code></pre></div><p><code>Finish()</code> 的过程是收尾工作。它首先确保最后一个数据块被 <code>Flush</code>。然后，依次写入过滤器块、属性块等元数据块，每写完一个，就在 <code>meta_index_builder</code> 中添加一条记录。接着，它将 <code>index_builder</code> 中积累的所有数据块索引信息序列化，写入为主索引块。然后，写入 <code>meta_index_builder</code> 自身形成的元数据索引块。最后，也是最关键的一步，它将主索引块和元数据索引块的 <code>BlockHandle</code> 连同 <code>magic number</code> 一起写入文件的最末端，形成 <code>Footer</code>。</p><h2 id="2-2-读路径：BlockBasedTableReader-的解析过程"><a href="#2-2-读路径：BlockBasedTableReader-的解析过程" class="headerlink" title="2.2 读路径：BlockBasedTableReader 的解析过程"></a>2.2 读路径：<code>BlockBasedTableReader</code> 的解析过程</h2><p><code>BlockBasedTableReader</code> 的工作流程与 <code>Builder</code> 的 <code>Finish()</code> 过程正好相反。它从 <code>Footer</code> 开始，反向解析出文件的结构。</p><h3 id="2-2-1-Open-从-Footer-开始的探索"><a href="#2-2-1-Open-从-Footer-开始的探索" class="headerlink" title="2.2.1 Open(): 从 Footer 开始的探索"></a>2.2.1 <code>Open()</code>: 从 Footer 开始的探索</h3><p><code>Open()</code> 是一个静态方法，是创建 <code>BlockBasedTableReader</code> 实例的唯一入口。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// table/block_based/block_based_table_reader.cc</span>
+<span class="hljs-function">Status <span class="hljs-title">BlockBasedTable::Open</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">    <span class="hljs-built_in">std</span>::<span class="hljs-built_in">unique_ptr</span>&lt;TableReader&gt;* table_reader, ...)</span> </span>&#123;
+  
+  <span class="hljs-comment">// 1. 从文件末尾读取并解析 Footer</span>
+  Footer footer;
+  s = ReadFooterFromFile(..., &amp;footer, ...);
+  <span class="hljs-keyword">if</span> (!s.ok()) &#123; <span class="hljs-keyword">return</span> s; &#125;
+
+  <span class="hljs-comment">// 2. 创建 Rep 对象，存储 Table 的所有状态</span>
+  Rep* rep = <span class="hljs-keyword">new</span> BlockBasedTable::Rep(...);
+  rep-&gt;footer = footer;
+
+  <span class="hljs-comment">// 3. 读取 Metaindex Block</span>
+  <span class="hljs-function"><span class="hljs-built_in">std</span>::<span class="hljs-built_in">unique_ptr</span>&lt;BlockBasedTable&gt; <span class="hljs-title">new_table</span><span class="hljs-params">(<span class="hljs-keyword">new</span> BlockBasedTable(rep, ...))</span></span>;
+  <span class="hljs-built_in">std</span>::<span class="hljs-built_in">unique_ptr</span>&lt;InternalIterator&gt; metaindex_iter;
+  s = new_table-&gt;ReadMetaIndexBlock(..., &amp;metaindex_iter);
+  <span class="hljs-keyword">if</span> (!s.ok()) &#123; <span class="hljs-keyword">return</span> s; &#125;
+
+  <span class="hljs-comment">// 4. 使用 Metaindex 查找并读取 Properties Block</span>
+  s = new_table-&gt;ReadPropertiesBlock(..., metaindex_iter.get(), ...);
+  <span class="hljs-keyword">if</span> (!s.ok()) &#123; <span class="hljs-keyword">return</span> s; &#125;
+
+  <span class="hljs-comment">// 5. 根据 Properties 和 Footer 信息，预取或加载 Index 和 Filter 块</span>
+  s = new_table-&gt;PrefetchIndexAndFilterBlocks(...);
+
+  <span class="hljs-keyword">if</span> (s.ok()) &#123; *table_reader = <span class="hljs-built_in">std</span>::move(new_table); &#125;
+  <span class="hljs-keyword">return</span> s;
+&#125;</code></pre></div><p><code>Open()</code> 的初始化过程严格遵循 SST 文件的布局：它首先从文件末尾读取 <code>Footer</code>，从中获得 <code>metaindex_handle</code> 和 <code>index_handle</code>。然后使用 <code>metaindex_handle</code> 读取元数据索引块，并通过它找到并读取属性块 (<code>Properties Block</code>)。最后，它使用 <code>index_handle</code> 和属性信息，创建对应类型的 <code>IndexReader</code> 和 <code>FilterBlockReader</code>。当 <code>Open()</code> 成功返回后，一个 <code>BlockBasedTableReader</code> 实例就准备就绪了，可以响应数据查找请求。</p><hr><h1 id="三、核心导航系统：索引-Index-的设计与实现"><a href="#三、核心导航系统：索引-Index-的设计与实现" class="headerlink" title="三、核心导航系统：索引 (Index) 的设计与实现"></a>三、核心导航系统：索引 (Index) 的设计与实现</h1><p>索引是快速定位数据块的关键。<code>IndexReader</code> 是 <code>BlockBasedTableReader</code> 内部用于解析和查询索引的抽象接口。RocksDB 提供了多种索引实现，在内存占用、点查找性能和范围扫描性能之间做出了不同的权衡。</p><h2 id="3-1-IndexReader-接口"><a href="#3-1-IndexReader-接口" class="headerlink" title="3.1 IndexReader 接口"></a>3.1 <code>IndexReader</code> 接口</h2><p><code>IndexReader</code> 接口最核心的方法是 <code>NewIterator()</code>，它返回一个用于遍历索引条目的迭代器。这个迭代器的 <code>value()</code> 就是数据块的 <code>BlockHandle</code>。</p><h2 id="3-2-二分查找索引-kBinarySearch"><a href="#3-2-二分查找索引-kBinarySearch" class="headerlink" title="3.2 二分查找索引 (kBinarySearch)"></a>3.2 二分查找索引 (<code>kBinarySearch</code>)</h2><p>这是最基础、也是默认的索引类型。</p><ul><li> <strong>结构</strong>: <code>Index Block</code> 本身就是一个标准的 <code>Block</code>，其中 <code>Key</code> 是数据块的 <code>separator</code>，<code>Value</code> 是 <code>BlockHandle</code>，所有条目有序存储。</li><li> <strong>查找过程</strong>: 在 <code>Index Block</code> 内部进行一次二分查找，快速定位到第一个 <code>separator &gt;= key</code> 的条目，从而找到目标数据块的句柄。</li><li> <strong>优缺点</strong>: 结构简单，范围扫描友好，内存占用较低。但每次点查找都需要 <code>O(log N)</code> 的二分查找。</li></ul><h2 id="3-3-哈希索引-kHashSearch"><a href="#3-3-哈希索引-kHashSearch" class="headerlink" title="3.3 哈希索引 (kHashSearch)"></a>3.3 哈希索引 (<code>kHashSearch</code>)</h2><p>为加速点查找而设计，需要用户提供前缀提取器 (<code>prefix_extractor</code>)。</p><ul><li> <strong>结构</strong>: 在标准 <code>Index Block</code> 之外，额外存储一个元数据块 <code>hash.index</code>，包含一个从“键的前缀”到“重启点索引”的哈希表。</li><li><strong>深度揭秘：“重启点 (Restart Point)” 与 “重启点索引”</strong>:<ul><li> <strong>重启点机制</strong>: 为解决前缀压缩带来的无法二分查找的问题，<code>Block</code> 被内部分为若干“重启区间”。每隔 <code>N</code> 个 <code>key</code> 就存储一个完整的“重启点”。块末尾有一个重启点偏移量数组，其<strong>下标</strong>就是“重启点索引”。</li><li> <strong>哈希索引如何利用</strong>: <code>hash.index</code> 哈希表存储的 <code>Value</code> 正是这个“重启点索引”。当查找一个 <code>key</code> 时，通过其前缀在哈希表中直接查到它所在的重启区间，将一次对整个 <code>Index Block</code> 的搜索，降维成一次哈希计算和一次对一个极小数据范围的廉价扫描。</li></ul></li><li> <strong>优缺点</strong>: 极大地加速了点查找性能，接近 O(1)。但依赖 <code>prefix_extractor</code>，增加了内存开销，对范围扫描无益。</li></ul><h2 id="3-4-两级分区索引-kTwoLevelIndexSearch"><a href="#3-4-两级分区索引-kTwoLevelIndexSearch" class="headerlink" title="3.4 两级分区索引 (kTwoLevelIndexSearch)"></a>3.4 两级分区索引 (<code>kTwoLevelIndexSearch</code>)</h2><p>当 SST 文件非常大时，单一的索引块会变得巨大，消耗大量内存并增加打开文件的延迟。两级分区索引正是为解决此问题而设计的。</p><h3 id="3-4-1-写路径：PartitionedIndexBuilder-的构建逻辑"><a href="#3-4-1-写路径：PartitionedIndexBuilder-的构建逻辑" class="headerlink" title="3.4.1 写路径：PartitionedIndexBuilder 的构建逻辑"></a>3.4.1 写路径：<code>PartitionedIndexBuilder</code> 的构建逻辑</h3><p>当 <code>index_type</code> 为 <code>kTwoLevelIndexSearch</code> 时，<code>BlockBasedTableBuilder</code> 会采用 <code>PartitionedIndexBuilder</code>。它将一个巨大的索引切分成多个小的“二级索引分区”，并为这些分区建立一个“一级顶层索引”。</p><ul><li><p><strong>核心成员变量 (简化后):</strong></p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// table/block_based/partitioned_index_builder.h &amp; .cc</span>
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">PartitionedIndexBuilder</span> :</span> <span class="hljs-keyword">public</span> IndexBuilder &#123;
+ <span class="hljs-keyword">private</span>:
+  BlockBuilder index_block_builder_; <span class="hljs-comment">// 用于构建当前“二级索引分区”</span>
+  BlockBuilder top_level_index_builder_; <span class="hljs-comment">// 用于构建“一级顶层索引”</span>
+  <span class="hljs-built_in">std</span>::<span class="hljs-built_in">string</span> last_key_in_partition_; <span class="hljs-comment">// 当前分区中最后一个 key</span>
+  <span class="hljs-keyword">const</span> BlockBasedTableOptions&amp; table_options_;
+&#125;;</code></pre></div></li><li><p><strong><code>AddIndexEntry()</code> 的核心逻辑</strong>:<br> 每当一个数据块写完，<code>AddIndexEntry()</code> 会被调用，其逻辑如下：</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// table/block_based/partitioned_index_builder.cc (伪代码)</span>
+<span class="hljs-function"><span class="hljs-keyword">void</span> <span class="hljs-title">PartitionedIndexBuilder::AddIndexEntry</span><span class="hljs-params">(</span></span>
+<span class="hljs-function"><span class="hljs-params">    <span class="hljs-keyword">const</span> Slice&amp; last_key_in_block, ...,</span></span>
+<span class="hljs-function"><span class="hljs-params">    <span class="hljs-keyword">const</span> BlockHandle&amp; block_handle)</span> </span>&#123;
+
+  <span class="hljs-comment">// 1. 将数据块的索引条目添加到当前的“二级索引分区”中</span>
+  index_block_builder_.Add(last_key_in_block, block_handle.Encode());
+  last_key_in_partition_.assign(last_key_in_block.data(), ...);
+
+  <span class="hljs-comment">// 2. 检查当前的“二级索引分区”是否已经太大</span>
+  <span class="hljs-keyword">if</span> (index_block_builder_.CurrentSizeEstimate() &gt;= table_options_.metadata_block_size) &#123;
+    
+    <span class="hljs-comment">// 3. 如果太大，就“切分”出一个分区</span>
+    <span class="hljs-comment">// a. 将当前二级索引分区的数据写入文件，获取其 BlockHandle (partition_handle)</span>
+    <span class="hljs-comment">// b. 在“一级顶层索引”中，添加一个指向该分区的条目：</span>
+    <span class="hljs-comment">//    Key: 刚完成分区的最后一个 key, Value: partition_handle</span>
+    top_level_index_builder_.Add(last_key_in_partition_, partition_handle.Encode());
+
+    <span class="hljs-comment">// c. 重置二级索引分区构造器，准备构建下一个分区</span>
+    index_block_builder_.Reset();
+  &#125;
+&#125;</code></pre></div><p> 这个过程像一条装配线：不断将索引条目装入“箱子”(<code>index_block_builder_</code>)，箱子满了（达到 <code>metadata_block_size</code>）就封箱并登记到总货运单（<code>top_level_index_builder_</code>）上，然后换新箱子继续。</p></li></ul><h3 id="3-4-2-读路径：PartitionedIndexReader-与-TwoLevelIterator"><a href="#3-4-2-读路径：PartitionedIndexReader-与-TwoLevelIterator" class="headerlink" title="3.4.2 读路径：PartitionedIndexReader 与 TwoLevelIterator"></a>3.4.2 读路径：<code>PartitionedIndexReader</code> 与 <code>TwoLevelIterator</code></h3><p>读取时，<code>BlockBasedTableReader</code> 会创建 <code>PartitionedIndexReader</code>。</p><ul><li><p><strong><code>NewIterator()</code> 的魔法</strong>:<br> <code>PartitionedIndexReader</code> 的 <code>NewIterator()</code> 方法会返回一个精心构造的 <strong><code>TwoLevelIterator</code>**。<code>TwoLevelIterator</code> 是 RocksDB 中一个通用的两级迭代辅助类，它接收一个</strong>一级迭代器<strong>和一个</strong>回调函数**。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// table/block_based/partitioned_index_reader.cc</span>
+<span class="hljs-function">InternalIteratorBase&lt;IndexValue&gt;* <span class="hljs-title">PartitionedIndexReader::NewIterator</span><span class="hljs-params">(...)</span> </span>&#123;
+  <span class="hljs-comment">// 1. 创建一级迭代器：在内存中的“顶层索引块”上创建迭代器。</span>
+  <span class="hljs-keyword">auto</span> top_level_iter = index_block_-&gt;NewIndexIterator(...);
+
+  <span class="hljs-comment">// 2. 创建回调函数状态对象：PartitionedIndexIteratorState</span>
+  <span class="hljs-keyword">auto</span> two_level_iter_state =
+      <span class="hljs-keyword">new</span> BlockBasedTable::PartitionedIndexIteratorState(table_, &amp;block_map_);
+
+  <span class="hljs-comment">// 3. 创建并返回 TwoLevelIterator</span>
+  <span class="hljs-keyword">return</span> NewTwoLevelIterator(two_level_iter_state, top_level_iter);
+&#125;</code></pre></div></li><li><p><strong>回调函数 <code>NewSecondaryIterator</code> 的实现</strong>:<br> 当一级迭代器（遍历顶层索引）定位到一个条目时，<code>TwoLevelIterator</code> 会调用此回调，并传入该条目的 <code>Value</code>（即二级索引分区的 <code>BlockHandle</code>）。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// table/block_based/block_based_table_reader.cc</span>
+InternalIteratorBase&lt;IndexValue&gt;*
+BlockBasedTable::PartitionedIndexIteratorState::NewSecondaryIterator(
+    <span class="hljs-keyword">const</span> BlockHandle&amp; handle) &#123; <span class="hljs-comment">// handle 是二级索引分区的句柄</span>
+  
+  <span class="hljs-comment">// 1. 通过 table_ 指针和 handle，读取或从缓存获取二级索引分区（可能发生I/O）</span>
+  CachableEntry&lt;Block&gt; block_entry;
+  table_-&gt;RetrieveBlock(..., handle, ..., &amp;block_entry, ...);
+  
+  <span class="hljs-comment">// 2. 为读取到的二级索引分区，创建一个标准的块迭代器并返回</span>
+  <span class="hljs-keyword">return</span> block_entry.GetValue()-&gt;NewIndexIterator(...);
+&#125;</code></pre></div></li></ul><h3 id="3-4-3-读操作流程串讲"><a href="#3-4-3-读操作流程串讲" class="headerlink" title="3.4.3 读操作流程串讲"></a>3.4.3 读操作流程串讲</h3><p>一个 <code>Seek(&quot;some_key&quot;)</code> 操作的内部流程如下：</p><ol><li> <code>TwoLevelIterator</code> 在<strong>一级迭代器</strong>（顶层索引）上 <code>Seek</code>，找到包含 <code>&quot;some_key&quot;</code> 的二级分区的 <code>BlockHandle</code>。</li><li> <code>TwoLevelIterator</code> 调用回调函数 <code>NewSecondaryIterator</code>，传入该 <code>BlockHandle</code>。</li><li> 回调函数内部读取（可能从磁盘）并解析这个二级分区，然后返回一个<strong>二级迭代器</strong>。</li><li> <code>TwoLevelIterator</code> 在这个新的二级迭代器上 <code>Seek(&quot;some_key&quot;)</code>，最终找到指向<strong>数据块</strong>的 <code>BlockHandle</code>。</li><li> 上层的 <code>BlockBasedTableIterator</code> 获得这个最终的 <code>BlockHandle</code>，进而读取数据块。</li></ol><ul><li> <strong>优缺点</strong>: 显著降低超大 SST 文件的内存占用，极大提高缓存利用率。但点查找可能需要两次 I/O（虽然顶层索引通常在缓存中）。</li></ul><h2 id="3-5-三种索引的对比总结"><a href="#3-5-三种索引的对比总结" class="headerlink" title="3.5 三种索引的对比总结"></a>3.5 三种索引的对比总结</h2><table><thead><tr><th align="left">索引类型</th><th align="left">点查找速度</th><th align="left">范围扫描速度</th><th align="left">内存占用</th><th align="left">适用场景</th></tr></thead><tbody><tr><td align="left"><strong><code>kBinarySearch</code></strong></td><td align="left">良好 (O(log N))</td><td align="left"><strong>优秀</strong></td><td align="left">中等</td><td align="left">默认选项，通用，性能均衡。</td></tr><tr><td align="left"><strong><code>kHashSearch</code></strong></td><td align="left"><strong>优秀</strong> (近 O(1))</td><td align="left">一般</td><td align="left">较高</td><td align="left">点查找密集型负载，需配置前缀提取器。</td></tr><tr><td align="left"><strong><code>kTwoLevelIndexSearch</code></strong></td><td align="left">很好</td><td align="left"><strong>优秀</strong></td><td align="left"><strong>极低</strong> (对大文件)</td><td align="left">文件体积非常大的场景，用于优化内存和缓存。</td></tr></tbody></table><hr><h1 id="四、-性能加速器之一：过滤器-Filter"><a href="#四、-性能加速器之一：过滤器-Filter" class="headerlink" title="四、 性能加速器之一：过滤器 (Filter)"></a>四、 性能加速器之一：过滤器 (Filter)</h1><p>过滤器是位于索引之前的“第一道防线”，专门用于“剪枝”，过滤掉大量对不存在的 <code>key</code> 的无效查询，避免昂贵的磁盘 I/O。</p><h2 id="4-1-FilterPolicy-策略接口与主流实现"><a href="#4-1-FilterPolicy-策略接口与主流实现" class="headerlink" title="4.1 FilterPolicy 策略接口与主流实现"></a>4.1 <code>FilterPolicy</code> 策略接口与主流实现</h2><p><code>FilterPolicy</code> 是用户在 <code>Options</code> 中配置的策略工厂。最核心的实现是<strong>布隆过滤器 (Bloom Filter)**，新兴的选择有 **Ribbon 过滤器</strong>。</p><h2 id="4-2-布隆过滤器-Bloom-Filter-深度解析"><a href="#4-2-布隆过滤器-Bloom-Filter-深度解析" class="headerlink" title="4.2 布隆过滤器 (Bloom Filter) 深度解析"></a>4.2 布隆过滤器 (Bloom Filter) 深度解析</h2><h3 id="4-2-1-原理：位数组与哈希函数"><a href="#4-2-1-原理：位数组与哈希函数" class="headerlink" title="4.2.1 原理：位数组与哈希函数"></a>4.2.1 原理：位数组与哈希函数</h3><p>布隆过滤器的核心思想是：用一个很长的<strong>位数组 (bit array)</strong> 和几个不同的**哈希函数 (hash function)**，来以极高的空间效率表示一个庞大的集合。</p><h3 id="4-2-2-Add-与-MayMatch-操作"><a href="#4-2-2-Add-与-MayMatch-操作" class="headerlink" title="4.2.2 Add 与 MayMatch 操作"></a>4.2.2 <code>Add</code> 与 <code>MayMatch</code> 操作</h3><p>我们通过它的两个核心操作来理解其原理：</p><p><strong>1. 添加元素 (<code>Add</code>)</strong></p><p>当 <code>BlockBasedTableBuilder</code> 构建SST文件，并将一个 <code>key</code> 添加到布隆过滤器时，会发生以下事情：</p><ol><li> 取一个长度为 <code>m</code> 的位数组，初始时所有位都为 0。</li><li> 准备 <code>k</code> 个独立的哈希函数（例如 <code>h1, h2, ..., hk</code>）。</li><li> 对于要添加的 <code>key</code>，分别计算 <code>k</code> 次哈希，得到 <code>k</code> 个哈希值。</li><li> 将这 <code>k</code> 个哈希值分别对位数组的长度 <code>m</code> 取模，得到 <code>k</code> 个在数组中的位置（下标）。</li><li> 将位数组在这 <code>k</code> 个位置上的 bit 全部置为 <code>1</code>。</li></ol><p><strong>图解 <code>Add(&quot;hello&quot;)</code> 操作:</strong><br>假设我们有3个哈希函数 (k=3)，一个位数组。</p><ul><li> <code>h1(&quot;hello&quot;) % m</code> -&gt; 得到下标 <code>5</code></li><li> <code>h2(&quot;hello&quot;) % m</code> -&gt; 得到下标 <code>12</code></li><li> <code>h3(&quot;hello&quot;) % m</code> -&gt; 得到下标 <code>21</code></li></ul><p>操作就是： <code>bit_array[5] = 1</code>, <code>bit_array[12] = 1</code>, <code>bit_array[21] = 1</code>。</p><p><strong>2. 查询元素 (<code>MayMatch</code>)</strong></p><p>当 <code>BlockBasedTableReader</code> 需要判断一个 <code>key</code> 是否“可能存在”时：</p><ol><li> 对要查询的 <code>key</code>，使用<strong>完全相同</strong>的 <code>k</code> 个哈希函数，计算出 <code>k</code> 个对应的数组下标。</li><li> 检查位数组在这些下标上的值。</li><li><strong>判断逻辑</strong>:<ul><li> 如果这 <code>k</code> 个位置中，<strong>只要有任何一个</strong> bit 是 <code>0</code>，那么过滤器就断定这个 <code>key</code> <strong>绝对不存在</strong>。因为如果它存在，当初 <code>Add</code> 操作时一定会把所有这些位都置为 <code>1</code>。这是布隆过滤器<strong>没有假阴性</strong>的根本原因。</li><li> 如果这 <code>k</code> 个位置的 bit <strong>全部都是 <code>1</code>**，那么过滤器就认为这个 <code>key</code> **可能存在</strong>。</li></ul></li></ol><p><strong>为什么是“可能”存在？—— 假阳性的来源</strong><br>因为这些位上的 <code>1</code> 可能是由其他 <code>key</code> 的 <code>Add</code> 操作设置的。例如，<code>Add(&quot;world&quot;)</code> 可能把第 <code>5</code> 位置为 <code>1</code>，<code>Add(&quot;rocksdb&quot;)</code> 可能把第 <code>12</code> 和 <code>21</code> 位置为 <code>1</code>。这样一来，即使我们从未添加过 <code>&quot;hello&quot;</code>，在查询它时也会发现第 <code>5</code>, <code>12</code>, <code>21</code> 位全为 <code>1</code>，从而产生误判。这个误判概率就是**假阳性率 (False Positive Rate)**。</p><h3 id="4-2-3-假阳性率与-bits-per-key"><a href="#4-2-3-假阳性率与-bits-per-key" class="headerlink" title="4.2.3 假阳性率与 bits_per_key"></a>4.2.3 假阳性率与 <code>bits_per_key</code></h3><p>假阳性是布隆过滤器的固有特性。<code>bits_per_key</code> 参数用于权衡空间占用和假阳性率，值越高，假阳性率越低，但内存占用越大。推荐值为 10，假阳性率约 1%。</p><h2 id="4-3-新兴选择：Ribbon-过滤器"><a href="#4-3-新兴选择：Ribbon-过滤器" class="headerlink" title="4.3 新兴选择：Ribbon 过滤器"></a>4.3 新兴选择：Ribbon 过滤器</h2><p>Ribbon 过滤器基于更复杂的数学变换，目标是在达到相同假阳性率的前提下，比布隆过滤器使用更少的空间（可节省25-50%），但代价是更高的 CPU 开销。适用于对内存占用极度敏感的场景。</p><h2 id="4-4-过滤器模式：完整-Full-vs-分区-Partitioned"><a href="#4-4-过滤器模式：完整-Full-vs-分区-Partitioned" class="headerlink" title="4.4 过滤器模式：完整 (Full) vs. 分区 (Partitioned)"></a>4.4 过滤器模式：完整 (Full) vs. 分区 (Partitioned)</h2><p>与索引类似，为了解决单个巨型过滤器带来的内存压力问题，过滤器也支持分区。该功能由 <code>BlockBasedTableOptions::partition_filters</code> 控制。</p><p><code>BlockBasedTableBuilder</code> 在创建时，会根据该选项决定使用哪种 <code>FilterBlockBuilder</code>。</p><div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// table/block_based/block_based_table_builder.cc</span>
+<span class="hljs-function">FilterBlockBuilder* <span class="hljs-title">CreateFilterBlockBuilder</span><span class="hljs-params">(...)</span> </span>&#123;
+  <span class="hljs-comment">// ...</span>
+  <span class="hljs-keyword">if</span> (table_opt.partition_filters) &#123;
+    <span class="hljs-comment">// 创建分区过滤器 Builder</span>
+    <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> PartitionedFilterBlockBuilder(...);
+  &#125; <span class="hljs-keyword">else</span> &#123;
+    <span class="hljs-comment">// 创建完整过滤器 Builder</span>
+    <span class="hljs-keyword">return</span> <span class="hljs-keyword">new</span> FullFilterBlockBuilder(...);
+  &#125;
+&#125;</code></pre></div><h3 id="4-4-1-完整过滤器-Full-Filter"><a href="#4-4-1-完整过滤器-Full-Filter" class="headerlink" title="4.4.1 完整过滤器 (Full Filter)"></a>4.4.1 完整过滤器 (Full Filter)</h3><p>这是最直接的实现方式，由 <code>FullFilterBlockBuilder</code> 和 <code>FullFilterBlockReader</code> 实现。</p><ul><li> <strong>结构</strong>: 对整个 SST 文件中的所有 <code>key</code>，只构建一个<strong>单一、巨大</strong>的过滤器。这个过滤器作为一个整体，存储在 SST 文件的一个元数据块中。</li><li> <strong>查找过程</strong>: <code>BlockBasedTableReader::Open()</code> 时，会找到并读取整个 <code>Filter Block</code> 到内存（或块缓存）中。当 <code>Get(key)</code> 请求到来时，<code>FullFilterBlockReader</code> 会在内存中的完整位图上进行一次哈希计算和检查。</li><li> <strong>优缺点</strong>: 结构简单，每次查询只需要在内存中进行一次判断，速度很快。但当 SST 文件非常大时，这个单一的过滤器也会变得非常大，消耗大量内存和块缓存。</li></ul><h3 id="4-4-2-分区过滤器-Partitioned-Filter"><a href="#4-4-2-分区过滤器-Partitioned-Filter" class="headerlink" title="4.4.2 分区过滤器 (Partitioned Filter)"></a>4.4.2 分区过滤器 (Partitioned Filter)</h3><p>这是更现代、更节省内存的实现，由 <code>PartitionedFilterBlockBuilder</code> 和 <code>PartitionedFilterBlockReader</code> 实现。</p><ul><li><strong>结构</strong>:<ol><li> <strong>过滤器分区</strong>: 不再为整个文件创建一个大过滤器，而是将 <code>key</code> 集合进行切分，为<strong>每个数据块</strong>（或每组数据块）创建一个独立的、小型的过滤器。这些小过滤器一个接一个地拼接在一起，形成过滤器的数据主体。</li><li> <strong>过滤器的索引</strong>: 同时，会创建一个用于定位这些小型过滤器的<strong>索引</strong>。这个索引的 <code>Key</code> 是数据块的最后一个 <code>key</code>，<code>Value</code> 则是对应的小型过滤器在拼接数据中的偏移量。这个索引本身被存储在一个独立的元数据块中。实际上，分区过滤器的索引和两级分区索引可以共用同一个 <code>PartitionedIndexBuilder</code>，这使得它们的结构和行为高度一致。</li></ol></li><li><strong>查找过程</strong>: <code>PartitionedFilterBlockReader</code> 内部持有自己的 <code>IndexReader</code>，用于查找过滤器分区。<div class="hljs"><pre><code class="hljs cpp"><span class="hljs-comment">// table/block_based/partitioned_filter_block.h</span>
+<span class="hljs-class"><span class="hljs-keyword">class</span> <span class="hljs-title">PartitionedFilterBlockReader</span> :</span> <span class="hljs-keyword">public</span> FilterBlockReaderCommon &#123;
+ <span class="hljs-keyword">public</span>:
+  <span class="hljs-function"><span class="hljs-keyword">static</span> <span class="hljs-built_in">std</span>::<span class="hljs-built_in">unique_ptr</span>&lt;FilterBlockReader&gt; <span class="hljs-title">Create</span><span class="hljs-params">(...)</span></span>;
+  <span class="hljs-comment">// ...</span>
+ <span class="hljs-keyword">private</span>:
+  <span class="hljs-built_in">std</span>::<span class="hljs-built_in">unique_ptr</span>&lt;IndexReader&gt; index_reader_; <span class="hljs-comment">// 内部持有自己的索引读取器</span>
+  <span class="hljs-comment">// ...</span>
+&#125;;</code></pre></div> 当一个 <code>Get(key)</code> 请求到来时，<code>PartitionedFilterBlockReader</code> 首先查询<strong>过滤器的索引</strong>，找到目标小型过滤器的位置，然后读取这个小型过滤器（如果不在缓存中），最后在加载到内存的小型过滤器上进行 <code>KeyMayMatch()</code> 判断。</li><li> <strong>优缺点</strong>: 极大地降低了内存占用。对于一次查询，不再需要加载整个文件的过滤器，而只需要加载一个很小的过滤器分区。但查询过程更复杂，可能需要一次额外的 I/O 来读取过滤器分区。</li></ul><hr><h1 id="五、-性能加速器之二：块缓存-Block-Cache"><a href="#五、-性能加速器之二：块缓存-Block-Cache" class="headerlink" title="五、 性能加速器之二：块缓存 (Block Cache)"></a>五、 性能加速器之二：块缓存 (Block Cache)</h1><p>Block Cache 是 RocksDB 的核心性能引擎，通过在内存中缓存热点数据块，有效地将慢速的磁盘操作转换为了快速的内存操作。</p><h2 id="5-1-默认实现：分片的-LRU-缓存-Sharded-LRUCache"><a href="#5-1-默认实现：分片的-LRU-缓存-Sharded-LRUCache" class="headerlink" title="5.1 默认实现：分片的 LRU 缓存 (Sharded LRUCache)"></a>5.1 默认实现：分片的 LRU 缓存 (<code>Sharded LRUCache</code>)</h2><p>RocksDB 的默认 Block Cache 实现是基于 <strong>LRU (Least Recently Used, 最近最少使用)</strong> 算法。</p><ul><li> <strong>LRU 原理：哈希表 + 双向链表</strong>: 内部使用哈希表实现 O(1) 的快速查找，同时使用双向链表维护块的访问顺序。链表头部是最新访问的，尾部是最久未访问的。</li><li><strong>命中、插入与淘汰逻辑</strong>:<ul><li> <strong>命中</strong>: 在哈希表中找到，将对应节点移到链表头部。</li><li> <strong>插入</strong>: 当缓存未命中时，从磁盘读取新块，创建新节点插入到链表头部。</li><li> <strong>淘汰</strong>: 如果缓存已满，则从链表尾部移除最久未使用的节点。</li></ul></li><li> <strong>为并发而生：分片机制</strong>: 为避免多线程下的锁竞争，<code>LRUCache</code> 内部被分为多个小的、独立的 LRU 实例（分片），每个分片有自己的锁。一个 <code>key</code> 根据其哈希值被路由到特定分片，极大地提高了并发性能。</li></ul><h2 id="5-2-高级特性"><a href="#5-2-高级特性" class="headerlink" title="5.2 高级特性"></a>5.2 高级特性</h2><ul><li> <strong>缓存优先级</strong>: 允许为索引、过滤器等高价值块设置高优先级，使其在缓存中停留更长时间。</li><li> <strong>二级压缩块缓存</strong>: 当块从主缓存（存储解压后数据）淘汰时，可以将其压缩后存入二级缓存。这是一种用 CPU 解压开销换取“第二次缓存机会”的有效策略，能进一步降低磁盘 I/O。</li></ul><hr><h2 id="6-数据的流动：迭代器与压缩"><a href="#6-数据的流动：迭代器与压缩" class="headerlink" title="6. 数据的流动：迭代器与压缩"></a>6. 数据的流动：迭代器与压缩</h2><h2 id="6-1-遍历全表：BlockBasedTableIterator"><a href="#6-1-遍历全表：BlockBasedTableIterator" class="headerlink" title="6.1 遍历全表：BlockBasedTableIterator"></a>6.1 遍历全表：<code>BlockBasedTableIterator</code></h2><ul><li> <strong>两级迭代器模型</strong>: <code>BlockBasedTableIterator</code> 是一个典型的两级迭代器。它内部持有一个“一级迭代器”（遍历索引）和一个“二级迭代器”（遍历数据块）。当二级迭代器遍历完一个数据块后，它会自动驱动一级迭代器前进，加载并切换到下一个数据块，从而对上层呈现出无缝、连续的遍历视图。</li><li> <strong>一个 <code>Seek</code> 操作的生命周期</strong>: 一个 <code>Seek</code> 操作是所有组件协同工作的完美体现：它可能先经过<strong>过滤器</strong>的快速剪枝，然后通过<strong>两级索引迭代器</strong>定位到数据块句柄，接着在<strong>块缓存</strong>中查找数据块，如果未命中则从<strong>磁盘</strong>读取并<strong>解压</strong>，最后在数据块内部完成最终的查找。</li></ul><h2 id="6-2-空间与性能的艺术：块压缩-Block-Compression"><a href="#6-2-空间与性能的艺术：块压缩-Block-Compression" class="headerlink" title="6.2 空间与性能的艺术：块压缩 (Block Compression)"></a>6.2 空间与性能的艺术：块压缩 (Block Compression)</h2><p>压缩是平衡存储成本和查询性能的关键手段。</p><h3 id="6-2-1-主流压缩算法对比"><a href="#6-2-1-主流压缩算法对比" class="headerlink" title="6.2.1 主流压缩算法对比"></a>6.2.1 主流压缩算法对比</h3><table><thead><tr><th align="left">压缩算法</th><th align="left">压缩速度</th><th align="left">解压速度</th><th align="left">压缩率</th><th align="left">CPU占用</th><th align="left">核心特点</th></tr></thead><tbody><tr><td align="left"><strong>LZ4</strong></td><td align="left"><strong>极高</strong></td><td align="left"><strong>极高</strong></td><td align="left">低</td><td align="left"><strong>极低</strong></td><td align="left">极限速度</td></tr><tr><td align="left"><strong>Snappy</strong></td><td align="left"><strong>极高</strong></td><td align="left"><strong>极高</strong></td><td align="left">中-低</td><td align="left"><strong>极低</strong></td><td align="left">速度快，非常均衡的旧默认选项</td></tr><tr><td align="left"><strong>ZSTD</strong></td><td align="left"><strong>高</strong></td><td align="left"><strong>极高</strong></td><td align="left"><strong>高</strong></td><td align="left">低-中</td><td align="left"><strong>全能，强烈推荐，支持字典压缩</strong></td></tr><tr><td align="left"><strong>ZLIB</strong></td><td align="left">低</td><td align="left">中</td><td align="left">中-高</td><td align="left">中</td><td align="left">压缩率较好，经典但偏慢</td></tr><tr><td align="left"><strong>BZip2</strong></td><td align="left"><strong>极低</strong></td><td align="left"><strong>极低</strong></td><td align="left"><strong>极高</strong></td><td align="left"><strong>极高</strong></td><td align="left">极限压缩率，用于归档</td></tr></tbody></table><h3 id="6-2-2-ZSTD-的王牌：字典压缩"><a href="#6-2-2-ZSTD-的王牌：字典压缩" class="headerlink" title="6.2.2 ZSTD 的王牌：字典压缩"></a>6.2.2 ZSTD 的王牌：字典压缩</h3><p>ZSTD 的字典压缩特性尤其强大。RocksDB 可以在构建 SST 文件时，自动从数据样本中训练出一个字典，并用它来压缩该文件内的所有块。对于包含大量相似结构的小记录，这能带来巨大的额外空间节省。对于新应用，<strong>ZSTD 是首选推荐</strong>。</p></div><hr><div><div class="post-metas mb-3"><div class="post-meta mr-3"><i class="iconfont icon-category"></i> <a class="hover-with-bg" href="/categories/KV%E6%95%B0%E6%8D%AE%E5%BA%93/">KV数据库</a></div><div class="post-meta"><i class="iconfont icon-tags"></i> <a class="hover-with-bg" href="/tags/KV%E6%95%B0%E6%8D%AE%E5%BA%93/">KV数据库</a> <a class="hover-with-bg" href="/tags/RocksDB/">RocksDB</a></div></div><p class="note note-warning">转载请注明出处</p><div class="post-prevnext row"><article class="post-prev col-6"></article><article class="post-next col-6"> <a href="/2025/08/20/RocksDB%E6%BA%90%E7%A0%81%E5%AD%A6%E4%B9%A0-%E6%B7%B1%E5%85%A5BlockBasedTable-%E4%B8%80/"><span class="hidden-mobile">RocksDB源码学习:深入BlockBasedTable(一)</span> <span class="visible-mobile">下一篇</span><i class="iconfont icon-arrowright"></i></a></article></div></div></article></div></div></div><div class="d-none d-lg-block col-lg-2 toc-container" id="toc-ctn"><div id="toc"><p class="toc-header"><i class="iconfont icon-list"></i>&nbsp;目录</p><div id="tocbot"></div></div></div></div></div></main><a id="scroll-top-button" href="#" role="button"><i class="iconfont icon-arrowup" aria-hidden="true"></i></a><div class="modal fade" id="modalSearch" tabindex="-1" role="dialog" aria-labelledby="ModalLabel" aria-hidden="true"><div class="modal-dialog modal-dialog-scrollable modal-lg" role="document"><div class="modal-content"><div class="modal-header text-center"><h4 class="modal-title w-100 font-weight-bold">搜索</h4> <button type="button" id="local-search-close" class="close" data-dismiss="modal" aria-label="Close"> <span aria-hidden="true">&times;</span></button></div><div class="modal-body mx-3"><div class="md-form mb-5"> <input type="text" id="local-search-input" class="form-control validate"> <label data-error="x" data-success="v" for="local-search-input">关键词</label></div><div class="list-group" id="local-search-result"></div></div></div></div></div><footer class="mt-5"><div class="text-center py-3"><div> <a href="https://hexo.io" target="_blank" rel="nofollow noopener"><span>Hexo</span></a><i class="iconfont icon-love"></i> <a href="https://github.com/fluid-dev/hexo-theme-fluid" target="_blank" rel="nofollow noopener"><span>Fluid</span></a></div><div class="statistics"> <span id="leancloud-site-pv-container" style="display:none">总访问量<span id="leancloud-site-pv"></span> 次</span> <span id="leancloud-site-uv-container" style="display:none">总访客数<span id="leancloud-site-uv"></span> 人</span></div></div></footer><script src="https://cdn.staticfile.org/jquery/3.4.1/jquery.min.js"></script><script src="https://cdn.staticfile.org/twitter-bootstrap/4.4.1/js/bootstrap.min.js"></script><script src="/js/debouncer.js"></script><script src="/js/main.js"></script><script src="/js/lazyload.js"></script><script defer="defer" src="https://cdn.staticfile.org/clipboard.js/2.0.6/clipboard.min.js"></script><script src="/js/clipboard-use.js"></script><script defer="defer">
+  (function () {
+    // 查询存储的记录
+    function getRecord(Counter, target) {
+      return new Promise(function (resolve, reject) {
+        Counter('get', '/classes/Counter?where=' + encodeURIComponent(JSON.stringify({target})))
+          .then(resp => resp.json())
+          .then(({results, code, error}) => {
+            if (code === 401) {
+              throw error;
+            }
+            if (results && results.length > 0) {
+              var record = results[0];
+              resolve(record);
+            } else {
+              Counter('post', '/classes/Counter', {target, time: 0})
+                .then(resp => resp.json())
+                .then((record, error) => {
+                  if (error) {
+                    throw error;
+                  }
+                  resolve(record);
+                }).catch(error => {
+                console.error('Failed to create', error);
+                reject(error);
+              });
+            }
+          }).catch((error) => {
+          console.error('LeanCloud Counter Error:', error);
+          reject(error);
+        });
+      })
+    }
+
+    // 发起自增请求
+    function increment(Counter, incrArr) {
+      return new Promise(function (resolve, reject) {
+        Counter('post', '/batch', {
+          "requests": incrArr
+        }).then((res) => {
+          res = res.json();
+          if (res.error) {
+            throw res.error;
+          }
+          resolve(res);
+        }).catch((error) => {
+          console.error('Failed to save visitor count', error);
+          reject(error);
+        });
+      });
+    }
+
+    // 构建自增请求体
+    function buildIncrement(objectId) {
+      return {
+        "method": "PUT",
+        "path": `/1.1/classes/Counter/${ objectId }`,
+        "body": {
+          "time": {
+            '__op': 'Increment',
+            'amount': 1
+          }
+        }
+      }
+    }
+
+    // 校验是否为有效的 UV
+    function validUV() {
+      var key = 'LeanCloud_UV_Flag';
+      var flag = localStorage.getItem(key);
+      if (flag) {
+        // 距离标记小于 24 小时则不计为 UV
+        if (new Date().getTime() - parseInt(flag) <= 86400000) {
+          return false;
+        }
+      }
+      localStorage.setItem(key, new Date().getTime().toString());
+      return true;
+    }
+
+    function addCount(Counter) {
+      var enableIncr = 'true' === 'true' && window.location.hostname !== 'localhost';
+      var getterArr = [];
+      var incrArr = [];
+
+      // 请求 PV 并自增
+      var pvCtn = document.querySelector('#leancloud-site-pv-container');
+      if (pvCtn || enableIncr) {
+        var pvGetter = getRecord(Counter, 'site-pv').then((record) => {
+          incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-pv');
+          if (ele) {
+            ele.innerText = record.time + 1;
+            if (pvCtn) {
+              pvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(pvGetter);
+      }
+
+      // 请求 UV 并自增
+      var uvCtn = document.querySelector('#leancloud-site-uv-container');
+      if (uvCtn || enableIncr) {
+        var uvGetter = getRecord(Counter, 'site-uv').then((record) => {
+          var vuv = validUV();
+          vuv && incrArr.push(buildIncrement(record.objectId))
+          var ele = document.querySelector('#leancloud-site-uv');
+          if (ele) {
+            ele.innerText = record.time + (vuv ? 1 : 0);
+            if (uvCtn) {
+              uvCtn.style.display = 'inline';
+            }
+          }
+        });
+        getterArr.push(uvGetter);
+      }
+
+      // 如果是文章，请求文章的浏览数，并自增
+      if ('true' === 'true') {
+        var viewCtn = document.querySelector('#leancloud-post-views-container');
+        if (viewCtn || enableIncr) {
+          var target = decodeURI('/2025/08/22/RocksDB%E6%BA%90%E7%A0%81%E5%AD%A6%E4%B9%A0-%E6%B7%B1%E5%85%A5BlockBasedTable-%E4%BA%8C/');
+          var viewGetter = getRecord(Counter, target).then((record) => {
+            incrArr.push(buildIncrement(record.objectId))
+            if (viewCtn) {
+              var ele = document.querySelector('#leancloud-post-views');
+              if (ele) {
+                ele.innerText = (record.time || 0) + 1;
+                viewCtn.style.display = 'inline';
+              }
+            }
+          });
+          getterArr.push(viewGetter);
+        }
+      }
+
+      // 如果启动计数自增，批量发起自增请求
+      if (enableIncr) {
+        Promise.all(getterArr).then(() => {
+          incrArr.length > 0 && increment(Counter, incrArr);
+        })
+      }
+    }
+
+    var app_id = 'rGBkjlpYFYPq3Mztf0uHkwm2-gzGzoHsz'
+    var app_key = 'IwuJ6qbGLXA8pB3qeHHjuDT3'
+    var server_url = 'https://rgbkjlpy.lc-cn-n1-shared.com'
+
+    function fetchData(api_server) {
+      var Counter = (method, url, data) => {
+        return fetch(`${ api_server }/1.1${ url }`, {
+          method,
+          headers: {
+            'X-LC-Id': app_id,
+            'X-LC-Key': app_key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(data)
+        });
+      };
+
+      addCount(Counter);
+    }
+
+    var api_server = app_id.slice(-9) !== '-MdYXbMMI' ? server_url : `https://${ app_id.slice(0, 8).toLowerCase() }.api.lncldglobal.com`;
+
+    if (api_server) {
+      fetchData(api_server);
+    } else {
+      fetch('https://app-router.leancloud.cn/2/route?appId=' + app_id)
+        .then(resp => resp.json())
+        .then(({api_server}) => {
+          fetchData('https://' + api_server);
+        });
+    }
+  })();
+</script><script src="https://cdn.staticfile.org/tocbot/4.11.1/tocbot.min.js"></script><script>$(document).ready(function(){var t=$("#board-ctn").offset().top;tocbot.init({tocSelector:"#tocbot",contentSelector:"#post-body",headingSelector:"h1,h2,h3,h4,h5,h6",linkClass:"tocbot-link",activeLinkClass:"tocbot-active-link",listClass:"tocbot-list",isCollapsedClass:"tocbot-is-collapsed",collapsibleClass:"tocbot-is-collapsible",collapseDepth:0,scrollSmooth:!0,headingsOffset:-t}),0<$(".toc-list-item").length&&$("#toc").css("visibility","visible")})</script><script src="https://cdn.staticfile.org/anchor-js/4.2.2/anchor.min.js"></script><script>
+    anchors.options = {
+      placement: "right",
+      visible: "hover",
+      
+    };
+    var el = "h1,h2,h3,h4,h5,h6".split(",");
+    var res = [];
+    for (item of el) {
+      res.push(".markdown-body > " + item)
+    }
+    anchors.add(res.join(", "))
+  </script><script src="/js/local-search.js"></script><script>var path="/local-search.xml",inputArea=document.querySelector("#local-search-input");inputArea.onclick=function(){searchFunc(path,"local-search-input","local-search-result"),this.onclick=null}</script><script src="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.js"></script><link rel="stylesheet" href="https://cdn.staticfile.org/fancybox/3.5.7/jquery.fancybox.min.css"><script>$("#post img:not(.no-zoom img, img[no-zoom]), img[zoom]").each(function(){var t=document.createElement("a");$(t).attr("data-fancybox","images"),$(t).attr("href",$(this).attr("src")),$(this).wrap(t)})</script></body></html>
